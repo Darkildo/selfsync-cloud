@@ -1,0 +1,66 @@
+name: Release
+
+# Тег x.y.z (ровно версия из manifest.json, без «v» — так требует каталог плагинов
+# Obsidian): main.js, manifest.json и styles.css с аттестацией происхождения, затем
+# черновик релиза. Ядро — только из выпущенного тега selfsync (подмодуль core/).
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Плагин и черновик релиза
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - name: Тег, manifest.json, versions.json и package.json совпадают
+        run: |
+          node -e '
+            const fs = require("fs");
+            const tag = process.argv[1];
+            const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const v = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+            const bad = [m.version !== tag && "manifest.json", p.version !== tag && "package.json", !(tag in v) && "versions.json"].filter(Boolean);
+            if (bad.length) { console.error(`версия ${tag} не совпадает: ${bad.join(", ")}`); process.exit(1); }
+          ' "${{ github.ref_name }}"
+      - name: core/ стоит на теге selfsync
+        run: git -C core describe --tags --exact-match
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - name: wasm-bindgen и wasm-opt
+        run: |
+          v=$(grep -A1 '^name = "wasm-bindgen"$' core/Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          cargo install wasm-bindgen-cli --version "$v" --locked
+          sudo apt-get update && sudo apt-get install -y binaryen
+      - run: core/scripts/build-wasm.sh
+      - run: |
+          npm ci
+          npm run lint
+          npm run build
+          npm test
+          mkdir -p dist
+          # Каталог Obsidian скачивает эти три файла из релиза по отдельности.
+          cp main.js manifest.json styles.css dist/
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Черновик релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          core=$(git -C core describe --tags --exact-match)
+          gh release create "$TAG" dist/* --draft --verify-tag --title "$TAG" \
+            --notes "Built from selfsync $core (the core/ submodule) in GitHub Actions; the files carry a provenance attestation."
