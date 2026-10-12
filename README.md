@@ -28,6 +28,8 @@ npm ci && npm run build      # main.js
 npm test
 ```
 
+The end-to-end test runs against the Selfsync Cloud server when `SELFSYNC_CLOUD_BIN` points to its binary; without it, the test is skipped. It checks that no request body ever carries a note or a file name in clear text.
+
 ## License
 
 [PolyForm Shield 1.0.0](LICENSE): you may read, run, change and share this code for any purpose except building a product that competes with Selfsync Cloud. The `core/` submodule is selfsync under the MIT license.

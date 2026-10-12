@@ -1,5 +1,5 @@
 // Собранный main.js целиком (WASM встроен) на заглушке Obsidian из core/: плагин
-// загружается, ядро инициализировано, вкладка настроек рисуется.
+// загружается поверх открытого selfsync, вкладка настроек рисует облачные разделы.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -24,16 +24,19 @@ before(() => {
     if (req === "obsidian") return obsidian;
     return orig.call(this, req, ...rest);
   };
+  const g = globalThis as Record<string, unknown>;
+  g.document = { visibilityState: "visible" };
+  g.window ??= globalThis;
 });
 
 interface LoadedPlugin {
   onload(): Promise<void>;
-  settings: { email: string };
-  settingTab: {
-    containerEl: { empty?: () => void };
-    display(): void;
-    getSettingDefinitions(): { heading: string; items: { render(s: unknown): unknown }[] }[];
-  };
+  onunload(): void;
+  runner?: unknown;
+  settings: Record<string, unknown>;
+  commands: { id: string }[];
+  settingTab: { getSettingDefinitions(): { heading: string; items: { render(s: unknown): unknown }[] }[] };
+  engineConfig(): Record<string, unknown>;
   core(): { version: string; protocol: number };
 }
 
@@ -41,38 +44,66 @@ async function load(data: unknown): Promise<LoadedPlugin> {
   const dir = await fsp.mkdtemp(join(tmpdir(), "selfsync-cloud-"));
   const req = Module.createRequire(import.meta.url);
   const Main = (req(join(ROOT, "main.js")) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
-  const plugin = new Main(obsidian.stubApp(dir, data), { id: "selfsync-cloud" });
+  const plugin = new Main(obsidian.stubApp(dir, data), { id: "selfsync-cloud", version: "0.1.0" });
   await plugin.onload();
   return plugin;
 }
 
-test("main.js: ядро из core/ загружено, версия — из манифеста подмодуля", async () => {
-  const plugin = await load(null);
-  const core = plugin.core();
-  const manifest = JSON.parse(readFileSync(join(ROOT, "core/manifest.json"), "utf8")) as { version: string };
-  assert.equal(core.version, manifest.version);
-  assert.ok(core.protocol >= 1, `протокол ${core.protocol}`);
-  assert.equal(plugin.settings.email, "");
-});
-
-test("main.js: вкладка настроек — раздел аккаунта и версия ядра, оба способа отрисовки", async () => {
-  const plugin = await load({ email: "a@example.com" });
-  assert.equal(plugin.settings.email, "a@example.com");
+function render(plugin: LoadedPlugin): { headings: string[]; rows: obsidian.Setting[] } {
   obsidian.settings.length = 0;
   const groups = plugin.settingTab.getSettingDefinitions();
-  assert.deepEqual(
-    groups.map((g) => g.heading),
-    ["Аккаунт", "О плагине"],
-  );
   for (const g of groups) for (const it of g.items) it.render(new obsidian.Setting());
-  const core = obsidian.settings.find((s) => s.name === "Ядро синхронизации");
-  assert.ok(core?.desc.startsWith(`selfsync ${plugin.core().version}, протокол `), String(core?.desc));
-  // Obsidian до 1.13 рисует те же строки через display().
-  obsidian.settings.length = 0;
-  plugin.settingTab.containerEl.empty = () => {};
-  plugin.settingTab.display();
-  assert.deepEqual(
-    obsidian.settings.map((s) => s.name),
-    ["Аккаунт", "", "О плагине", "Ядро синхронизации"],
-  );
+  return { headings: groups.map((g) => g.heading), rows: obsidian.settings.filter((s) => !s.hidden) };
+}
+
+test("main.js: ядро из core/, шифрование обязательно, свои команды", async () => {
+  const plugin = await load(null);
+  try {
+    const core = plugin.core();
+    const manifest = JSON.parse(readFileSync(join(ROOT, "core/manifest.json"), "utf8")) as { version: string };
+    assert.equal(core.version, manifest.version);
+    assert.ok(core.protocol >= 1);
+    const cfg = plugin.engineConfig();
+    assert.equal(cfg.requireEncryption, true);
+    assert.equal(cfg.client, "cloud/0.1.0");
+    const ids = plugin.commands.map((c) => c.id);
+    assert.ok(ids.includes("account") && ids.includes("invite"), ids.join(", "));
+    // Ссылки подключения self-hosted сервера здесь нет.
+    assert.ok(!ids.includes("connect"));
+    // Без подключения синк не запущен.
+    assert.equal(plugin.runner, undefined);
+    assert.equal(plugin.settings.region, "ru");
+  } finally {
+    plugin.onunload();
+  }
+});
+
+test("main.js: настройки без аккаунта — вход, регистрация, код; затем синк и версия ядра", async () => {
+  const plugin = await load(null);
+  try {
+    const { headings, rows } = render(plugin);
+    assert.equal(headings[0], "Аккаунт");
+    assert.ok(headings.includes("О плагине"));
+    // Разделы синхронизации открытого плагина на месте, подключения к своему серверу — нет.
+    assert.ok(headings.includes("Синхронизация"), headings.join(", "));
+    assert.ok(!headings.includes("Подключение"), headings.join(", "));
+    const buttons = rows.flatMap((r) => r.buttons);
+    for (const b of ["Зарегистрироваться", "Войти", "У меня есть код приглашения"]) assert.ok(buttons.includes(b), buttons.join(", "));
+  } finally {
+    plugin.onunload();
+  }
+});
+
+test("main.js: устройство по приглашению без сессии — только вход", async () => {
+  // Без токена синк не запускается: проверяется только отрисовка.
+  const plugin = await load({ vault: "c-x", vaultLabel: "Notes" });
+  try {
+    const { rows } = render(plugin);
+    const intro = rows.find((r) => r.desc.includes("«Notes»"));
+    assert.ok(intro, rows.map((r) => r.desc).join(" | "));
+    assert.deepEqual(intro.buttons, ["Войти"]);
+    assert.ok(rows.some((r) => r.name === "«Notes»" && r.buttons.includes("Пригласить устройство")));
+  } finally {
+    plugin.onunload();
+  }
 });

@@ -30,3 +30,14 @@
   width: 100%;
   font-family: var(--font-monospace);
 }
+
+/* Тариф «скоро»: виден, но выбрать нельзя. */
+.selfsync-cloud-soon {
+  opacity: 0.5;
+}
+
+.selfsync-cloud-phrase {
+  columns: 3;
+  font-family: var(--font-monospace);
+  user-select: text;
+}

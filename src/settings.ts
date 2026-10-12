@@ -1,67 +1,248 @@
-// Вкладка настроек. Пока сервиса нет — только заготовка раздела аккаунта и версия
-// ядра, чтобы было видно, из какого тега selfsync собран плагин. Как и в открытом
-// плагине: до Obsidian 1.13 строки рисует `display()`, с 1.13 — `getSettingDefinitions()`.
+// Вкладка настроек: аккаунт, vault этого устройства, устройства аккаунта, тарифы
+// и версия ядра; затем разделы синхронизации открытого плагина как есть.
 
-import { type App, PluginSettingTab, Setting, type SettingDefinitionItem } from "obsidian";
+import type { App, Setting } from "obsidian";
 
-import { t } from "./i18n.ts";
+import { formatBytes, t as coreT } from "../core/plugin/src/i18n.ts";
+import { type Row, type Section, SelfsyncSettingTab } from "../core/plugin/src/settings.ts";
+import { confirm } from "../core/plugin/src/ui/confirm.ts";
+import type { TariffView } from "./api.ts";
+import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
+import { AuthModal, CodeModal, InviteModal, PasswordPromptModal, VaultModal } from "./ui.ts";
 
-interface Row {
-  name: string;
-  desc?: string;
-  build(s: Setting): void;
+/** Данные аккаунта старее — перечитать при открытии вкладки. */
+const STALE_MS = 30_000;
+
+export function limitText(n: number, f: (n: number) => string = String): string {
+  return n === 0 ? t("account.unlimited") : f(n);
 }
 
-interface Section {
-  heading: string;
-  rows: Row[];
+export function tariffLimits(x: TariffView): string {
+  return t("tariff.limits", {
+    bytes: limitText(x.bytes_hard, formatBytes),
+    vaults: limitText(x.vaults),
+    devices: limitText(x.devices),
+    file: limitText(x.max_file, formatBytes),
+  });
 }
 
-export class CloudSettingTab extends PluginSettingTab {
+export class CloudSettingTab extends SelfsyncSettingTab {
+  private loadedAt = 0;
+  private loading = false;
+
   constructor(
     app: App,
-    private plugin: SelfsyncCloudPlugin,
+    private cloudPlugin: SelfsyncCloudPlugin,
   ) {
-    super(app, plugin);
+    super(app, cloudPlugin);
   }
 
-  override getSettingDefinitions(): SettingDefinitionItem[] {
-    return this.sections().map((sec) => ({
-      type: "group" as const,
-      heading: sec.heading,
-      items: sec.rows.map((r) => ({ name: r.name, desc: r.desc, render: (s: Setting) => r.build(s) })),
-    }));
+  /** Аккаунт и тарифы — с сервера, в фоне; по ответу вкладка перерисовывается. */
+  private load(): void {
+    if (this.loading || Date.now() - this.loadedAt < STALE_MS) return;
+    const cloud = this.cloudPlugin.cloud;
+    if (!cloud.server()) return;
+    this.loading = true;
+    void Promise.allSettled([cloud.refreshAccount(), cloud.loadInfo()]).then(() => {
+      this.loading = false;
+      this.loadedAt = Date.now();
+      this.refresh();
+    });
   }
 
-  override display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    for (const sec of this.sections()) {
-      new Setting(containerEl).setName(sec.heading).setHeading();
-      for (const r of sec.rows) r.build(new Setting(containerEl));
+  /** Перечитать аккаунт сейчас (после действий). */
+  reload(): void {
+    this.loadedAt = 0;
+    this.load();
+    this.refresh();
+  }
+
+  protected override sections(): Section[] {
+    // Обе отрисовки (display и getSettingDefinitions) начинаются здесь.
+    this.load();
+    const keep = super
+      .sections()
+      .filter((s) => s.heading === coreT("settings.sync") || s.heading === coreT("configSync.heading"));
+    const out: Section[] = [{ heading: t("settings.account"), rows: this.accountRows() }];
+    const vault = this.vaultRows();
+    if (vault.length > 0) out.push({ heading: t("settings.vault"), rows: vault });
+    if (this.cloudPlugin.cloud.account) out.push({ heading: t("settings.devices"), rows: this.deviceRows() });
+    const tariffs = this.tariffRows();
+    if (tariffs.length > 0) out.push({ heading: t("settings.tariffs"), rows: tariffs });
+    out.push(...keep);
+    out.push({ heading: t("settings.about"), rows: [this.aboutRow()] });
+    return out;
+  }
+
+  private get s() {
+    return this.cloudPlugin.settings;
+  }
+
+  private accountRows(): Row[] {
+    const cloud = this.cloudPlugin.cloud;
+    const a = cloud.account;
+    const rows: Row[] = [];
+    if (a) {
+      rows.push({
+        name: a.email,
+        build: (s: Setting) => {
+          s.setName(a.email).setDesc(
+            t("account.usage", {
+              tariff: a.tariff.title,
+              used: formatBytes(a.usage.bytes),
+              limit: limitText(a.tariff.bytes_hard, formatBytes),
+              vaults: `${a.usage.vaults}/${limitText(a.tariff.vaults)}`,
+              devices: `${a.usage.devices}/${limitText(a.tariff.devices)}`,
+            }),
+          );
+          s.addButton((b) =>
+            b.setButtonText(t("account.logout")).onClick(async () => {
+              await cloud.logout();
+              this.refresh();
+            }),
+          );
+        },
+      });
+      rows.push({
+        name: t("account.delete"),
+        desc: t("account.deleteDesc"),
+        build: (s: Setting) => {
+          s.setName(t("account.delete")).setDesc(t("account.deleteDesc"));
+          s.addButton((b) =>
+            b.setButtonText(t("account.delete")).onClick(() => {
+              new PasswordPromptModal(this.app, t("account.delete"), t("account.deleteConfirm"), async (pw) => {
+                await cloud.deleteAccount(pw);
+                this.refresh();
+                return null;
+              }).open();
+            }),
+          );
+        },
+      });
+    } else {
+      const invited = this.s.vault !== "" && !this.s.session;
+      const desc = invited ? t("account.invited", { label: this.s.vaultLabel }) : t("account.intro");
+      rows.push({
+        name: "",
+        desc,
+        build: (s: Setting) => {
+          s.setDesc(desc);
+          if (!invited) s.addButton((b) => b.setButtonText(t("account.register")).setCta().onClick(() => new AuthModal(this.app, this.cloudPlugin, "register").open()));
+          s.addButton((b) => b.setButtonText(t("account.login")).onClick(() => new AuthModal(this.app, this.cloudPlugin, "login").open()));
+          if (!this.s.vault) s.addButton((b) => b.setButtonText(t("account.haveCode")).onClick(() => new CodeModal(this.app, this.cloudPlugin).open()));
+        },
+      });
     }
+    rows.push({
+      name: t("account.service"),
+      desc: t("account.serviceDesc"),
+      build: (s: Setting) => {
+        s.setName(t("account.service")).setDesc(t("account.serviceDesc"));
+        s.addText((x) =>
+          x
+            .setValue(this.s.serviceUrl)
+            .onChange(async (v) => {
+              this.s.serviceUrl = v.trim();
+              await this.cloudPlugin.saveSettings();
+            }),
+        );
+      },
+    });
+    return rows;
   }
 
-  private sections(): Section[] {
-    const core = this.plugin.core();
-    const coreDesc = t("settings.coreDesc", { version: core.version, protocol: core.protocol });
-    const soon: Row = {
-      name: "",
-      build: (s) => {
-        s.setDesc(t("settings.soon"));
-      },
-    };
-    const coreRow: Row = {
-      name: t("settings.core"),
-      desc: coreDesc,
-      build: (s) => {
-        s.setName(t("settings.core")).setDesc(coreDesc);
-      },
-    };
+  private vaultRows(): Row[] {
+    const cloud = this.cloudPlugin.cloud;
+    if (this.s.vault) {
+      const name = t("vault.connected", { label: this.s.vaultLabel || this.s.vault });
+      return [
+        {
+          name,
+          desc: t("vault.connectedDesc"),
+          build: (s: Setting) => {
+            s.setName(name).setDesc(t("vault.connectedDesc"));
+            s.addButton((b) => b.setButtonText(t("vault.invite")).onClick(() => new InviteModal(this.app, this.cloudPlugin).open()));
+            s.addButton((b) =>
+              b.setButtonText(t("vault.disconnect")).onClick(async () => {
+                if (!(await confirm(this.app, t("vault.disconnectConfirm"), t("vault.disconnect")))) return;
+                await cloud.forgetDevice();
+                this.reload();
+              }),
+            );
+          },
+        },
+      ];
+    }
+    if (!cloud.account) return [];
     return [
-      { heading: t("settings.account"), rows: [soon] },
-      { heading: t("settings.about"), rows: [coreRow] },
+      {
+        name: t("vault.pickTitle"),
+        desc: t("vault.pickDesc"),
+        build: (s: Setting) => {
+          s.setName(t("vault.pickTitle")).setDesc(t("vault.pickDesc"));
+          s.addButton((b) => b.setButtonText(t("vault.pickTitle")).setCta().onClick(() => new VaultModal(this.app, this.cloudPlugin).open()));
+        },
+      },
     ];
+  }
+
+  private deviceRows(): Row[] {
+    const a = this.cloudPlugin.cloud.account;
+    if (!a || a.devices.length === 0) return [{ name: "", build: (s: Setting) => s.setDesc(t("devices.none")) }];
+    const label = (vault: string) => a.vaults.find((v) => v.name === vault)?.label ?? vault;
+    return a.devices.map((d) => {
+      const desc = t("devices.lastSeen", { vault: label(d.vault), time: d.last_seen ? new Date(d.last_seen).toLocaleString() : "—" });
+      return {
+        name: d.name,
+        desc,
+        build: (s: Setting) => {
+          s.setName(d.name).setDesc(desc);
+          s.addButton((b) =>
+            b.setButtonText(t("devices.revoke")).onClick(async () => {
+              try {
+                await this.cloudPlugin.cloud.revokeDevice(d.id);
+              } catch (e) {
+                s.setDesc(errorText(e));
+                return;
+              }
+              this.refresh();
+            }),
+          );
+        },
+      };
+    });
+  }
+
+  private tariffRows(): Row[] {
+    const cloud = this.cloudPlugin.cloud;
+    const list = cloud.info?.tariffs ?? (cloud.account ? [cloud.account.tariff] : []);
+    const current = cloud.account?.tariff.id;
+    return list.map((x) => {
+      const status = x.id === current ? t("tariff.current") : x.status === "soon" ? t("tariff.soon") : "";
+      const name = [x.title, x.price, status ? `· ${status}` : ""].filter(Boolean).join(" ");
+      const desc = tariffLimits(x);
+      return {
+        name,
+        desc,
+        build: (s: Setting) => {
+          s.setName(name).setDesc(desc);
+          // Тариф «скоро» виден, но выбрать его пока нельзя.
+          if (x.status === "soon") s.settingEl.addClass("selfsync-cloud-soon");
+        },
+      };
+    });
+  }
+
+  private aboutRow(): Row {
+    const core = this.cloudPlugin.core();
+    const desc = t("settings.coreDesc", { version: core.version, protocol: core.protocol });
+    return {
+      name: t("settings.core"),
+      desc,
+      build: (s: Setting) => {
+        s.setName(t("settings.core")).setDesc(desc);
+      },
+    };
   }
 }
