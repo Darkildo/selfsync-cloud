@@ -1,0 +1,32 @@
+.selfsync-qr {
+  display: block;
+  width: min(260px, 70vw);
+  margin: 0 auto 1em;
+}
+
+.selfsync-device-revoked .setting-item-name {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+/* Строка-контейнер со списком устройств: устройства идут друг под другом. */
+.setting-item.selfsync-devices {
+  display: block;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Фраза восстановления: 24 слова в две-три колонки, моноширинно. */
+.selfsync-phrase {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9em, 1fr));
+  gap: 0.3em 1em;
+  font-family: var(--font-monospace);
+  margin: 0.5em 0 1em;
+  user-select: text;
+}
+
+.selfsync-phrase-input {
+  width: 100%;
+  font-family: var(--font-monospace);
+}
