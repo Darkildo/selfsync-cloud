@@ -44,7 +44,8 @@ async function load(data: unknown): Promise<LoadedPlugin> {
   const dir = await fsp.mkdtemp(join(tmpdir(), "selfsync-cloud-"));
   const req = Module.createRequire(import.meta.url);
   const Main = (req(join(ROOT, "main.js")) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
-  const plugin = new Main(obsidian.stubApp(dir, data), { id: "selfsync-cloud", version: "0.1.0" });
+  // Регион без адреса: отрисовка настроек не ходит в сеть к настоящему сервису.
+  const plugin = new Main(obsidian.stubApp(dir, { region: "offline", ...(data as object) }), { id: "selfsync-cloud", version: "0.1.0" });
   await plugin.onload();
   return plugin;
 }
@@ -72,7 +73,7 @@ test("main.js: ядро из core/, шифрование обязательно,
     assert.ok(!ids.includes("connect"));
     // Без подключения синк не запущен.
     assert.equal(plugin.runner, undefined);
-    assert.equal(plugin.settings.region, "ru");
+    assert.equal(plugin.settings.region, "offline");
   } finally {
     plugin.onunload();
   }
