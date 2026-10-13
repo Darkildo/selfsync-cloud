@@ -445,3 +445,33 @@ export class PasswordPromptModal extends Form {
     return this.onPassword(this.password);
   }
 }
+
+/** Смена пароля аккаунта: текущий, новый и он же ещё раз. */
+export class ChangePasswordModal extends Form {
+  private old = "";
+  private next = "";
+  private confirm = "";
+
+  constructor(
+    app: App,
+    private plugin: SelfsyncCloudPlugin,
+  ) {
+    super(app);
+  }
+
+  override onOpen(): void {
+    this.header(t("account.changePassword"), t("auth.passwordDesc"));
+    this.text(t("account.oldPassword"), "", (v) => (this.old = v), true);
+    this.text(t("account.newPassword"), "", (v) => (this.next = v), true);
+    this.text(t("auth.confirm"), "", (v) => (this.confirm = v), true);
+    this.footer(t("account.changePassword"));
+  }
+
+  protected async submit(): Promise<string | null> {
+    if (this.next !== this.confirm) return t("auth.mismatch");
+    if (this.next.length < 10 || passwordStrength(this.next) < WEAK_BITS) return t("auth.weak");
+    if (!(await this.plugin.cloud.changePassword(this.old, this.next))) return t("unlock.wrong");
+    new Notice(t("account.passwordChanged"));
+    return null;
+  }
+}

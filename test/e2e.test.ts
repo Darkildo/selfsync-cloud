@@ -41,6 +41,7 @@ interface CloudPart {
   connectVault(name: string): Promise<void>;
   redeem(server: string, code: string, vaultPassword?: string): Promise<void>;
   unlock(password?: string): Promise<boolean>;
+  changePassword(oldPassword: string, newPassword: string): Promise<boolean>;
   invite(name: string): Promise<{ code: string; uri: string }>;
   revokeDevice(id: number): Promise<void>;
   refreshAccount(): Promise<{ devices: { id: number; name: string }[] } | null>;
@@ -207,6 +208,11 @@ test("облако: регистрация, vault, QR, код, вход, лим�
   await e.plugin.cloud.recover("ru", email, words.join(" "), NEW_PASSWORD);
   await assert.rejects(e.plugin.cloud.login("ru", email, PASSWORD), (err: { code?: string }) => err.code === "bad_credentials");
   await e.plugin.cloud.login("ru", email, NEW_PASSWORD);
+  // Смена пароля из плагина: неверный текущий — отказ без запроса; верный — новый входит.
+  assert.equal(await e.plugin.cloud.changePassword("not the password", "third long passphrase x"), false);
+  assert.equal(await e.plugin.cloud.changePassword(NEW_PASSWORD, "third long passphrase x"), true);
+  await assert.rejects(e.plugin.cloud.login("ru", email, NEW_PASSWORD), (err: { code?: string }) => err.code === "bad_credentials");
+  await e.plugin.cloud.login("ru", email, "third long passphrase x");
   // Устройства с токеном и ключом продолжают синхронизироваться.
   await fsp.writeFile(join(b.dir, "after.md"), "после смены пароля\n");
   await until(b.plugin, "отправка с B", () => b.plugin.runner?.status().pending === 0);

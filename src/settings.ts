@@ -9,7 +9,7 @@ import { confirm } from "../core/plugin/src/ui/confirm.ts";
 import type { TariffView } from "./api.ts";
 import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
-import { AuthModal, CodeModal, InviteModal, PasswordPromptModal, VaultModal } from "./ui.ts";
+import { AuthModal, ChangePasswordModal, CodeModal, InviteModal, PasswordPromptModal, VaultModal } from "./ui.ts";
 
 /** Данные аккаунта старее — перечитать при открытии вкладки. */
 const STALE_MS = 30_000;
@@ -96,6 +96,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
               devices: `${a.usage.devices}/${limitText(a.tariff.devices)}`,
             }),
           );
+          s.addButton((b) => b.setButtonText(t("account.changePassword")).onClick(() => new ChangePasswordModal(this.app, this.cloudPlugin).open()));
           s.addButton((b) =>
             b.setButtonText(t("account.logout")).onClick(async () => {
               await cloud.logout();

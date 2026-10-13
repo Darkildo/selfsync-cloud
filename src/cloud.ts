@@ -5,6 +5,7 @@
 import {
   credentials,
   fromB64,
+  kdfJson,
   newRecovery,
   openRecovery,
   parseKdf,
@@ -164,6 +165,19 @@ export class Cloud {
     await this.keepWrap("", "", "");
   }
 
+  /** Смена пароля: тот же ключ аккаунта под новым паролем. Другие сессии
+   *  закрываются, устройства продолжают синхронизироваться. */
+  async changePassword(oldPassword: string, newPassword: string): Promise<boolean> {
+    const old = await this.keysFor(oldPassword);
+    const key = await unwrapAccountKey(old.wrapKey, fromB64(this.s.wrappedKey));
+    if (!key) return false;
+    const cred = await credentials(newPassword, key, parseKdf(this.s.kdf));
+    await this.api().changePassword(old.authKey, cred);
+    this.rememberAccountKey(key);
+    await this.keepWrap(kdfJson(cred.kdf), toB64(cred.salt), toB64(cred.wrappedKey));
+    return true;
+  }
+
   private async keysFor(password: string) {
     if (!this.s.salt || !this.s.kdf) throw new CloudError(0, "no_account", "нет данных аккаунта на устройстве");
     return passwordKeys(password, fromB64(this.s.salt), parseKdf(this.s.kdf));
@@ -199,8 +213,8 @@ export class Cloud {
   }
 
   private async connect(server: string, token: string, vault: string, label: string): Promise<void> {
-    // Ключ прежнего vault'а этому не подходит.
-    this.plugin.app.saveLocalStorage(VAULT_KEY, null);
+    // Индекс и ключ прежнего vault'а этому не подходят.
+    await this.plugin.forgetVault(server.replace(/\/+$/, ""), vault);
     this.s.server = server.replace(/\/+$/, "");
     this.s.token = token;
     this.s.vault = vault;
