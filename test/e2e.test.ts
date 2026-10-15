@@ -159,7 +159,7 @@ test("облако: регистрация, vault, QR, код, вход, лим�
   await fsp.writeFile(join(a.dir, "note.md"), `${SECRET}\n`);
   await fsp.mkdir(join(a.dir, "dir"));
   await fsp.writeFile(join(a.dir, "dir", "deep.md"), `${SECRET} deep\n`);
-  const words = await a.plugin.cloud.register("ru", email, PASSWORD);
+  const words = await a.plugin.cloud.register("cis", email, PASSWORD);
   assert.equal(words.length, 24);
   await a.plugin.cloud.createVault("Notes");
   await until(a.plugin, "шифрование и отправка на A", () => {
@@ -188,7 +188,7 @@ test("облако: регистрация, vault, QR, код, вход, лим�
 
   // D: вход в аккаунт. Бесплатный тариф — три устройства: четвёртое не пускают.
   const d = await device("desktop");
-  const acc = await d.plugin.cloud.login("ru", email, PASSWORD);
+  const acc = await d.plugin.cloud.login("cis", email, PASSWORD);
   assert.equal(acc.vaults.length, 1);
   const vault = acc.vaults[0]?.name ?? "";
   await assert.rejects(d.plugin.cloud.connectVault(vault), (e: { code?: string }) => e.code === "device_limit");
@@ -205,14 +205,14 @@ test("облако: регистрация, vault, QR, код, вход, лим�
 
   // E: забыли пароль — фраза задаёт новый; старый больше не входит.
   const e = await device("recovery");
-  await e.plugin.cloud.recover("ru", email, words.join(" "), NEW_PASSWORD);
-  await assert.rejects(e.plugin.cloud.login("ru", email, PASSWORD), (err: { code?: string }) => err.code === "bad_credentials");
-  await e.plugin.cloud.login("ru", email, NEW_PASSWORD);
+  await e.plugin.cloud.recover("cis", email, words.join(" "), NEW_PASSWORD);
+  await assert.rejects(e.plugin.cloud.login("cis", email, PASSWORD), (err: { code?: string }) => err.code === "bad_credentials");
+  await e.plugin.cloud.login("cis", email, NEW_PASSWORD);
   // Смена пароля из плагина: неверный текущий — отказ без запроса; верный — новый входит.
   assert.equal(await e.plugin.cloud.changePassword("not the password", "third long passphrase x"), false);
   assert.equal(await e.plugin.cloud.changePassword(NEW_PASSWORD, "third long passphrase x"), true);
-  await assert.rejects(e.plugin.cloud.login("ru", email, NEW_PASSWORD), (err: { code?: string }) => err.code === "bad_credentials");
-  await e.plugin.cloud.login("ru", email, "third long passphrase x");
+  await assert.rejects(e.plugin.cloud.login("cis", email, NEW_PASSWORD), (err: { code?: string }) => err.code === "bad_credentials");
+  await e.plugin.cloud.login("cis", email, "third long passphrase x");
   // Устройства с токеном и ключом продолжают синхронизироваться.
   await fsp.writeFile(join(b.dir, "after.md"), "после смены пароля\n");
   await until(b.plugin, "отправка с B", () => b.plugin.runner?.status().pending === 0);

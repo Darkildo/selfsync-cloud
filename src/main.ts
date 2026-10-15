@@ -11,11 +11,12 @@ import { protocolVersion } from "../core/plugin/pkg/selfsync_wasm.js";
 import type { Transport } from "./api.ts";
 import { Cloud, INVITE_ACTION } from "./cloud.ts";
 import { setLanguage, t } from "./i18n.ts";
+import { defaultRegion } from "./regions.ts";
 import { CloudSettingTab } from "./settings.ts";
 import { CodeModal, InviteModal, StartModal, UnlockModal } from "./ui.ts";
 
 export interface CloudSettings extends Settings {
-  /** Регион аккаунта (`ru`, `intl`). */
+  /** Регион аккаунта: `cis` (СНГ) или `eu` (Europe). */
   region: string;
   /** Свой адрес сервиса вместо адреса региона (проверка сервера). */
   serviceUrl: string;
@@ -30,7 +31,7 @@ export interface CloudSettings extends Settings {
 }
 
 const CLOUD_DEFAULTS = {
-  region: "ru",
+  region: "",
   serviceUrl: "",
   email: "",
   session: "",
@@ -58,6 +59,7 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
   override async loadSettings(): Promise<void> {
     await super.loadSettings();
     this.settings = { ...CLOUD_DEFAULTS, ...this.settings };
+    if (!this.settings.region) this.settings.region = defaultRegion(moment.locale());
   }
 
   protected override createSettingTab(): CloudSettingTab {

@@ -49,7 +49,7 @@ abstract class Form extends Modal {
 
   protected region(get: () => string, set: (v: string) => void): void {
     new Setting(this.contentEl).setName(t("region.name")).addDropdown((d) => {
-      for (const r of REGIONS) d.addOption(r, r === "ru" ? t("region.ru") : t("region.intl"));
+      for (const r of REGIONS) d.addOption(r, r === "cis" ? t("region.cis") : t("region.eu"));
       d.setValue(get()).onChange(set);
     });
   }

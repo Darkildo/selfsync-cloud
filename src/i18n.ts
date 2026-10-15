@@ -33,8 +33,8 @@ const en = {
   "account.unlimited": "unlimited",
 
   "region.name": "Region",
-  "region.ru": "Russia",
-  "region.intl": "International",
+  "region.cis": "CIS",
+  "region.eu": "Europe",
 
   "auth.registerTitle": "Create a Selfsync Cloud account",
   "auth.loginTitle": "Sign in to Selfsync Cloud",
@@ -144,8 +144,8 @@ const ru: Record<Key, string> = {
   "account.unlimited": "без ограничения",
 
   "region.name": "Регион",
-  "region.ru": "Россия",
-  "region.intl": "Международный",
+  "region.cis": "СНГ",
+  "region.eu": "Europe",
 
   "auth.registerTitle": "Регистрация в Selfsync Cloud",
   "auth.loginTitle": "Вход в Selfsync Cloud",

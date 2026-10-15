@@ -10,7 +10,7 @@ If you would rather run the server yourself, use the open [selfsync](https://git
 
 - **Account required.** You sign up with an email and a password inside the plugin.
 - **Paid plans.** There is a free plan; larger plans will be paid. Plans that are not available yet are shown greyed out.
-- **Network use.** The plugin talks only to the Selfsync Cloud servers in the region you pick at sign-up. Notes, file names and folder names are encrypted on your device before they leave it; the service cannot read them.
+- **Network use.** The plugin talks only to the Selfsync Cloud servers in the region you pick at sign-up: CIS or Europe. Notes, file names and folder names are encrypted on your device before they leave it; the service cannot read them.
 - **No telemetry.** The plugin collects no analytics. The server keeps what sync needs (account email, device names, encrypted data sizes and times).
 - **Lost password and recovery phrase mean lost data.** The service holds no key to your notes, so support cannot restore access.
 
