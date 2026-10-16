@@ -42,10 +42,14 @@ build() {
   (
     cd "$src"
     rustup toolchain install >/dev/null 2>&1
-    local sysroot cargo_home
+    local sysroot cargo_home commit
     sysroot=$(rustc --print sysroot)
+    commit=$(rustc -vV | sed -n 's/^commit-hash: //p')
     cargo_home=${CARGO_HOME:-$HOME/.cargo}
-    RUSTFLAGS="--remap-path-prefix=$cargo_home/registry/src=/cargo --remap-path-prefix=$sysroot=/rust --remap-path-prefix=$src=/selfsync" \
+    # С компонентом rust-src пути std указывают на его исходники, без него — на
+    # виртуальный /rustc/<коммит>: приводим к виртуальному (последнее правило главнее).
+    RUSTFLAGS="--remap-path-prefix=$cargo_home/registry/src=/cargo --remap-path-prefix=$sysroot=/rust \
+--remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit --remap-path-prefix=$src=/selfsync" \
       cargo build -q --locked -p selfsync-wasm --target wasm32-unknown-unknown --profile wasm
     wasm-bindgen --target web --out-dir plugin/pkg target/wasm32-unknown-unknown/wasm/selfsync_wasm.wasm
     # Флаги — как в scripts/build-wasm.sh selfsync.
@@ -84,7 +88,9 @@ check)
     exit 1
   fi
   if ! diff -r "$fresh" "$ROOT/core"; then
-    echo "core/ не совпадает со сборкой selfsync $tag" >&2
+    rm -rf "$ROOT/core-fresh"
+    mv "$fresh" "$ROOT/core-fresh"
+    echo "core/ не совпадает со сборкой selfsync $tag; свежая сборка — в core-fresh/" >&2
     exit 1
   fi
   rm -rf "$fresh"
