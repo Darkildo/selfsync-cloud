@@ -9,6 +9,8 @@ import {
   credentials,
   fromB64,
   type Kdf,
+  KDF_MAX,
+  KdfError,
   kdfJson,
   newRecovery,
   openRecovery,
@@ -88,7 +90,19 @@ test("base64url и параметры KDF", () => {
     assert.deepEqual(fromB64(toB64(b)), b);
   }
   assert.ok(!toB64(new Uint8Array([251, 255])).match(/[+/=]/));
-  assert.deepEqual(parseKdf(kdfJson(KDF)), KDF);
-  assert.deepEqual(parseKdf('{"alg":"argon2id","m":65536,"t":3,"p":1}'), { m: 65536, t: 3, p: 1 });
-  assert.throws(() => parseKdf('{"alg":"scrypt","m":1,"t":1,"p":1}'));
+  const def = { m: 65536, t: 3, p: 1 };
+  assert.deepEqual(parseKdf(kdfJson(def)), def);
+  assert.deepEqual(parseKdf('{"alg":"argon2id","m":65536,"t":3,"p":1}'), def);
+  assert.throws(() => parseKdf('{"alg":"scrypt","m":65536,"t":3,"p":1}'), KdfError);
+});
+
+test("KDF с сервера: слабее параметров сервиса или тяжелее предела — отказ", () => {
+  // Слабый KDF — подсказка сервера, как перебрать ключ входа до пароля.
+  assert.throws(() => parseKdf(kdfJson(KDF)), (e: { code?: string }) => e.code === "bad_kdf");
+  assert.throws(() => parseKdf(kdfJson({ m: 65536, t: 1, p: 1 })), KdfError);
+  assert.throws(() => parseKdf(kdfJson({ m: 65535, t: 3, p: 1 })), KdfError);
+  assert.throws(() => parseKdf(kdfJson({ m: 1024 * 1024, t: 3, p: 1 })), KdfError);
+  assert.throws(() => parseKdf(kdfJson({ m: 65536, t: 64, p: 1 })), KdfError);
+  assert.throws(() => parseKdf(kdfJson({ m: 65536.5, t: 3, p: 1 })), KdfError);
+  assert.deepEqual(parseKdf(kdfJson(KDF_MAX)), KDF_MAX);
 });

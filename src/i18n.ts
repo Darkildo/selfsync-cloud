@@ -91,6 +91,9 @@ const en = {
   "code.code": "Invite code",
   "code.submit": "Connect",
   "code.invalid": "The code is invalid or expired",
+  "code.from": "Code {code} from {server}",
+  "code.replaces": "This device syncs “{label}”. The invite connects it to another vault instead: files here stay and join that vault.",
+  "code.untrusted": "The invite link points to an unknown server {server}. Selfsync Cloud connects only to its own regions or to the service address set in the settings.",
 
   "unlock.title": "Account password",
   "unlock.desc": "The vault is encrypted. Enter the account password to open the key on this device.",
@@ -110,6 +113,7 @@ const en = {
   "cmd.invite": "Invite a device",
 
   "error.generic": "Error: {message}",
+  "error.badKdf": "The service asked for unsafe password protection settings. Nothing was sent; update the plugin or contact support.",
 };
 
 type Key = keyof typeof en;
@@ -202,6 +206,9 @@ const ru: Record<Key, string> = {
   "code.code": "Код приглашения",
   "code.submit": "Подключить",
   "code.invalid": "Код неверный или истёк",
+  "code.from": "Код {code} от {server}",
+  "code.replaces": "Это устройство синхронизирует «{label}». Приглашение подключит его к другому vault'у: файлы здесь останутся и попадут в тот vault.",
+  "code.untrusted": "Ссылка приглашения ведёт на неизвестный сервер {server}. Selfsync Cloud подключается только к своим регионам или к адресу сервиса из настроек.",
 
   "unlock.title": "Пароль аккаунта",
   "unlock.desc": "Vault зашифрован. Введите пароль аккаунта, чтобы открыть ключ на этом устройстве.",
@@ -221,6 +228,7 @@ const ru: Record<Key, string> = {
   "cmd.invite": "Пригласить устройство",
 
   "error.generic": "Ошибка: {message}",
+  "error.badKdf": "Сервис запросил небезопасные параметры защиты пароля. Ничего не отправлено; обновите плагин или напишите в поддержку.",
 };
 
 let lang: "ru" | "en" = "en";
@@ -246,11 +254,14 @@ export function errorText(e: unknown): string {
     registration_closed: "auth.closed",
     rate_limited: "auth.rateLimited",
     code_invalid: "code.invalid",
+    bad_kdf: "error.badKdf",
     bad_recovery: "recover.wrong",
   };
   const k = code ? known[code] : undefined;
   if (k) return t(k);
   const msg = e instanceof Error ? e.message : String(e);
+  // В сообщении — адрес из ссылки.
+  if (code === "untrusted_server") return t("code.untrusted", { server: msg });
   if (/ERR_|ECONN|net::|Failed to fetch|timed out/i.test(msg)) return t("auth.offline");
   return t("error.generic", { message: msg });
 }

@@ -21,11 +21,26 @@ export interface Kdf {
   p: number;
 }
 
+/** Пределы параметров KDF с сервера. Ниже — ключ входа (он уходит на сервер)
+ *  дёшево перебирается до пароля, а с ним открывается ключ аккаунта; выше —
+ *  телефон не вытянет. Нижний предел — параметры сервиса по умолчанию. */
+export const KDF_MIN: Kdf = { m: 64 * 1024, t: 3, p: 1 };
+export const KDF_MAX: Kdf = { m: 256 * 1024, t: 10, p: 4 };
+
+/** Сервер прислал KDF вне пределов: пароль с ним не используется. */
+export class KdfError extends Error {
+  readonly code = "bad_kdf";
+}
+
 /** Параметры KDF из JSON сервера (`{"alg":"argon2id","m":…,"t":…,"p":…}`). */
 export function parseKdf(raw: string): Kdf {
   const v = JSON.parse(raw) as { alg?: string; m?: number; t?: number; p?: number };
-  if (v.alg !== "argon2id" || !v.m || !v.t || !v.p) throw new Error(`kdf: ${raw}`);
-  return { m: v.m, t: v.t, p: v.p };
+  if (v.alg !== "argon2id" || !v.m || !v.t || !v.p) throw new KdfError(`kdf: ${raw}`);
+  const k = { m: v.m, t: v.t, p: v.p };
+  for (const f of ["m", "t", "p"] as const) {
+    if (!Number.isInteger(k[f]) || k[f] < KDF_MIN[f] || k[f] > KDF_MAX[f]) throw new KdfError(`kdf: ${raw}`);
+  }
+  return k;
 }
 
 export function kdfJson(k: Kdf): string {

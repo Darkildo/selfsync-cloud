@@ -17,7 +17,7 @@ import {
 } from "./account.ts";
 import { type AccountView, CloudApi, CloudError, type Info, type Transport } from "./api.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
-import { regionUrl } from "./regions.ts";
+import { REGIONS, regionUrl } from "./regions.ts";
 
 /** Ключ аккаунта на устройстве (как запомненный ключ vault'а в открытом плагине). */
 const ACCOUNT_KEY = "selfsync-cloud-account-key";
@@ -51,6 +51,14 @@ export class Cloud {
   /** Адрес сервиса: свой (для проверки) или региона. */
   server(region = this.s.region): string {
     return (this.s.serviceUrl || regionUrl(region)).replace(/\/+$/, "");
+  }
+
+  /** Адрес из ссылки приглашения — адрес региона или свой адрес сервиса. Чужой
+   *  сервер выдал бы токен своего vault'а и пароль к нему: заметки этого vault'а
+   *  Obsidian ушли бы туда зашифрованными известным ему ключом. */
+  trusted(server: string): boolean {
+    const n = norm(server);
+    return n !== "" && [this.s.serviceUrl, ...REGIONS.map(regionUrl)].some((u) => u !== "" && norm(u) === n);
   }
 
   private api(server = this.server()): CloudApi {
@@ -146,10 +154,13 @@ export class Cloud {
     return this.account;
   }
 
+  /** Выход: сессия закрывается, ключ аккаунта забывается. Синк vault'а этого
+   *  устройства идёт дальше на ключе vault'а, который запомнило ядро. */
   async logout(): Promise<void> {
     if (this.s.session) await this.api().logout().catch(() => undefined);
     this.s.session = "";
     this.account = null;
+    this.rememberAccountKey(null);
     await this.plugin.saveSettings();
   }
 
@@ -206,7 +217,8 @@ export class Cloud {
   /** Приглашение: по QR (`vaultPw` из ссылки) устройство открывает vault сразу,
    *  по коду — после ввода пароля аккаунта (`unlock`). */
   async redeem(server: string, code: string, vaultPw?: string): Promise<void> {
-    const r = await new CloudApi(server.replace(/\/+$/, ""), this.http).redeem(code, this.s.deviceName);
+    if (!this.trusted(server)) throw new CloudError(0, "untrusted_server", server);
+    const r = await new CloudApi(server.trim().replace(/\/+$/, ""), this.http).redeem(code, this.s.deviceName);
     await this.keepWrap(r.kdf, r.salt, r.wrapped_key);
     await this.connect(server, r.token, r.vault, r.label);
     if (vaultPw) this.plugin.runner?.send({ type: "password", password: vaultPw, remember: true });
@@ -270,4 +282,9 @@ export class Cloud {
     if (!k) throw new CloudError(0, "no_account_key", "войдите в аккаунт на этом устройстве");
     return k;
   }
+}
+
+/** Адрес для сравнения: без пробелов, «/» на конце и регистра. */
+function norm(url: string): string {
+  return url.trim().replace(/\/+$/, "").toLowerCase();
 }

@@ -2,7 +2,7 @@
 // окна истории, конфликтов и корзины, — плюс аккаунт облака вместо ссылок
 // подключения. Шифрование обязательно: без ключа ядро ничего не отправляет.
 
-import { moment, requestUrl } from "obsidian";
+import { moment, Notice, requestUrl } from "obsidian";
 
 import SelfsyncPlugin from "../core/plugin/src/main.ts";
 import type { Settings } from "../core/plugin/src/settings.ts";
@@ -78,8 +78,11 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
       },
     });
     // QR приглашения: адрес сервиса, код и пароль vault'а (он только в ссылке).
+    // Ссылку может прислать кто угодно: чужой адрес сервиса не принимается.
     this.registerObsidianProtocolHandler(INVITE_ACTION, (p) => {
-      if (p.s && p.c) new CodeModal(this.app, this, { server: p.s, code: p.c, vaultPassword: p.k }).open();
+      if (!p.s || !p.c) return;
+      if (!this.cloud.trusted(p.s)) new Notice(t("code.untrusted", { server: p.s }), 0);
+      else new CodeModal(this.app, this, { server: p.s, code: p.c, vaultPassword: p.k }).open();
     });
   }
 

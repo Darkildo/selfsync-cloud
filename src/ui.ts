@@ -371,6 +371,8 @@ export class CodeModal extends Form {
 
   override onOpen(): void {
     this.header(t("code.title"), this.fromQr ? undefined : t("code.desc"));
+    const s = this.plugin.settings;
+    if (s.token) this.contentEl.createEl("p", { text: t("code.replaces", { label: s.vaultLabel || s.vault }), cls: "mod-warning" });
     if (!this.fromQr) {
       this.region(
         () => this.regionId,
@@ -378,7 +380,7 @@ export class CodeModal extends Form {
       );
       this.text(t("code.code"), "", (v) => (this.code = v));
     } else {
-      this.contentEl.createEl("p", { text: formatCode(this.code) });
+      this.contentEl.createEl("p", { text: t("code.from", { code: formatCode(this.code), server: this.fromQr.server }) });
     }
     this.footer(t("code.submit"));
   }
