@@ -238,17 +238,27 @@ export class CloudSettingTab extends SelfsyncSettingTab {
                 .setDisabled(!this.cloudPlugin.runner)
                 .onClick(() => new DiagnoseModal(this.app, () => this.cloudPlugin.diagnose()).open()),
             );
+          },
+        },
+        {
+          name: t("vault.disconnect"),
+          desc: t("vault.disconnectDesc"),
+          build: (s: Setting) => {
+            s.setName(t("vault.disconnect")).setDesc(t("vault.disconnectDesc"));
             s.addButton((b) =>
-              b.setButtonText(t("vault.disconnect")).onClick(async () => {
-                if (!(await confirm(this.app, t("vault.disconnectConfirm"), t("vault.disconnect")))) return;
-                try {
-                  await cloud.forgetDevice();
-                } catch (e) {
-                  // Без связи токен не отозвать: отключить только здесь — по согласию.
-                  if (!(await confirm(this.app, t("vault.disconnectOffline", { error: errorText(e) }), t("vault.disconnect")))) return;
-                  await cloud.forgetDevice({ revoke: false });
-                }
-              }),
+              b
+                .setButtonText(t("vault.disconnectButton"))
+                .setDestructive()
+                .onClick(async () => {
+                  if (!(await confirm(this.app, t("vault.disconnectConfirm"), t("vault.disconnectButton")))) return;
+                  try {
+                    await cloud.forgetDevice();
+                  } catch (e) {
+                    // Без связи токен не отозвать: отключить только здесь — по согласию.
+                    if (!(await confirm(this.app, t("vault.disconnectOffline", { error: errorText(e) }), t("vault.disconnectButton")))) return;
+                    await cloud.forgetDevice({ revoke: false });
+                  }
+                }),
             );
           },
         },
@@ -274,7 +284,8 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     if (!a) return [];
     const rows: Row[] = a.sessions.map((x) => {
       const name = x.current ? t("devices.current", { name: x.name }) : x.name;
-      const desc = t("sessions.lastSeen", { client: x.client || "—", time: x.last_seen ? new Date(x.last_seen).toLocaleString() : "—" });
+      const time = x.last_seen ? t("sessions.lastSeen", { time: new Date(x.last_seen).toLocaleString() }) : "";
+      const desc = [x.client, time].filter(Boolean).join(" · ");
       return {
         name,
         desc,

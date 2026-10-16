@@ -113,6 +113,9 @@ test("main.js: устройство по приглашению без сесс�
     assert.ok(intro, rows.map((r) => r.desc).join(" | "));
     assert.deepEqual(intro.buttons, ["Войти"]);
     assert.ok(rows.some((r) => r.name === "«Notes»" && r.buttons.includes("Подключить устройство")));
+    // Отключение — своей строкой: три кнопки в одной сжимали описание vault'а до буквы.
+    assert.ok(rows.some((r) => r.name === "Отключить это устройство" && r.buttons.includes("Отключить")));
+    assert.ok(!rows.some((r) => r.name === "«Notes»" && r.buttons.includes("Отключить")));
   } finally {
     plugin.onunload();
   }
