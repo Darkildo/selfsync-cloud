@@ -2,7 +2,7 @@ Required Notice: Copyright 2026 Darkildo (https://github.com/Darkildo)
 
 Licensor Line of Business: Selfsync Cloud, a hosted end-to-end encrypted sync service for Obsidian vaults (https://github.com/Darkildo/selfsync-cloud)
 
-These terms cover everything in this repository except the `core/` submodule, which is the open selfsync project under its own MIT license (core/LICENSE).
+These terms cover everything in this repository except `core/`, which is the open selfsync project under its own MIT license (core/LICENSE).
 
 # PolyForm Shield License 1.0.0
 

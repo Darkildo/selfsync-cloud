@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "description": "Плагин Obsidian для облачной синхронизации Selfsync Cloud",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "PolyForm-Shield-1.0.0",
   "type": "module",
   "scripts": {
     "core:check": "scripts/core.sh check",
