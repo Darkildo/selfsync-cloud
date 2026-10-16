@@ -1,5 +1,3 @@
-/* tslint:disable */
-/* eslint-disable */
 
 export class WasmEngine {
     free(): void;

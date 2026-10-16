@@ -12,7 +12,7 @@ If you would rather run the server yourself, use the open [selfsync](https://git
 2. Put them into `<your vault>/.obsidian/plugins/selfsync-cloud/`.
 3. In Obsidian, open *Settings → Community plugins*, turn off restricted mode if needed and enable **Selfsync Cloud**.
 
-Works on desktop and mobile, Obsidian 1.8.7 or newer. Do not enable it together with the open selfsync plugin in the same vault.
+Works on desktop and mobile, Obsidian 1.13 or newer. Do not enable it together with the open selfsync plugin in the same vault.
 
 ## Usage
 

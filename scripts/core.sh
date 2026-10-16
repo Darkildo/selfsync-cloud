@@ -52,6 +52,12 @@ build() {
 --remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit --remap-path-prefix=$src=/selfsync" \
       cargo build -q --locked -p selfsync-wasm --target wasm32-unknown-unknown --profile wasm
     wasm-bindgen --target web --out-dir plugin/pkg target/wasm32-unknown-unknown/wasm/selfsync_wasm.wasm
+    # Как в build-wasm.sh selfsync: общий «eslint-disable» из .d.ts wasm-bindgen не
+    # пропускает ревью каталога Obsidian (core/ оно проверяет вместе с остальным).
+    for f in plugin/pkg/*.d.ts; do
+      grep -v -x -e '/\* tslint:disable \*/' -e '/\* eslint-disable \*/' "$f" > "$f.tmp"
+      mv "$f.tmp" "$f"
+    done
     # Флаги — как в scripts/build-wasm.sh selfsync.
     wasm-opt -Oz \
       --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \

@@ -1,5 +1,3 @@
-/* tslint:disable */
-/* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_wasmengine_free: (a: number, b: number) => void;
 export const argon2id: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
