@@ -16,25 +16,28 @@ Works on desktop and mobile, Obsidian 1.13 or newer. Do not enable it together w
 
 ## Usage
 
-**First device.** Open *Settings → Selfsync Cloud* and press **Sign up**. Pick a region (CIS or Europe), enter an email and a password. You get a 24-word recovery phrase: write it down, it is the only way back in if you forget the password. Then press **Choose a vault** and create one; the plugin encrypts the vault and uploads it.
+**First device.** Open *Settings → Selfsync Cloud*, press **Start syncing** and pick a region (CIS or Europe): that is where the encrypted data lives. No email or password is needed: the account is created at once, the vault is encrypted and uploaded. A 24-word **recovery phrase** appears in the settings; write it down soon, it is the only way back into the account if your devices are lost. Until you mark it as written down, the plugin reminds you in the status bar.
 
-**More devices.** On a connected device press **Invite a device**. Either scan the QR code with the new device (it opens Obsidian and connects at once), or type the short code on the new device under **I have an invite code** and then enter the account password. Codes work once and expire after 10 minutes. You can also simply sign in on the new device and pick the vault.
+**More devices.** On a connected device press **Connect a device** and scan the QR code with the new device’s camera: Obsidian opens, signs in and joins the same vault. Without a camera, type the code shown under the QR under **Already have an account → Enter a code**, then the recovery phrase (or the password, if you added one). Codes work once and expire after 10 minutes. The phrase alone also signs in, with no other device around.
 
-**Day to day.** Sync runs by itself. Conflicting edits are merged or kept as conflict copies; deleted files and older versions are in the file history and the trash, as in selfsync. The settings show your storage use, your devices (any of them can be revoked) and the plans. You can change the password, sign out or delete the account with all its data there too.
+**Email and password** are optional, in the account settings: with them you can sign in by typing on any device and confirm deletion with the password. One password for the account and the encryption; it never leaves the device.
+
+**Day to day.** Sync runs by itself. Conflicting edits are merged or kept as conflict copies; deleted files and older versions are in the file history and the trash, as in selfsync. The settings show your storage use, the account’s sign-ins and devices (any of them can be revoked) and the plans. You can sign out or delete the account with all its data there too.
 
 ## Disclosures
 
-- **Account required.** You sign up with an email and a password inside the plugin.
+- **Account required.** It is created with one press inside the plugin, without an email or a password; you can add them later. Pressing Start accepts the terms of service.
 - **Paid plans.** There is a free plan; larger plans will be paid. Plans that are not available yet are shown greyed out.
-- **Network use.** The plugin talks only to the Selfsync Cloud servers in the region you pick at sign-up: CIS or Europe. Notes, file names and folder names are encrypted on your device before they leave it; the service cannot read them.
-- **No telemetry.** The plugin collects no analytics. The server keeps what sync needs (account email, device names, encrypted data sizes and times).
+- **Network use.** The plugin talks only to the Selfsync Cloud servers in the region you pick when creating the account: CIS or Europe. Notes, file names and folder names are encrypted on your device before they leave it; the service cannot read them.
+- **No telemetry.** The plugin collects no analytics. The server keeps what sync needs (device and sign-in names, the email if you added one, encrypted data sizes and times).
+- **What stays on the device.** The account key and, until you mark it as written down, the recovery phrase words live in this device’s Obsidian local storage (not in the vault folder). The connect QR code carries the account key: show it only to your own device.
 - **Files outside the vault API.** On desktop the sync engine uses Node's `fs` module, only inside your vault folder and the plugin's own folder: to replace files atomically (so a crash never leaves a half-written note) and to read large files in parts. On mobile it uses the Obsidian vault API only.
-- **Clipboard.** The plugin writes to the clipboard only when you press a copy button (recovery phrase, invite code, connect link, sync log). It never reads the clipboard.
-- **Lost password and recovery phrase mean lost data.** The service holds no key to your notes, so support cannot restore access.
+- **Clipboard.** The plugin writes to the clipboard only when you press a copy button (recovery phrase, connect code, sync log). It never reads the clipboard.
+- **Losing every device without a written-down phrase means lost data.** The service holds no key to your notes, so support cannot restore access. Notes on your devices stay.
 
 ## Source and audit
 
-This repository adds only the cloud screens: sign-up and sign-in, plans and device invites. The sync engine is the open selfsync project at a released tag, kept in `core/`: its plugin sources and styles, its MIT license and the engine compiled to WebAssembly. `core/SOURCE` names the tag and commit. CI rebuilds `core/` from that tag with `scripts/core.sh check` and fails unless the result is byte-identical, so `core/` cannot drift from the published selfsync.
+This repository adds only the cloud screens: account creation and sign-in, the recovery phrase, plans and device connection. The sync engine is the open selfsync project at a released tag, kept in `core/`: its plugin sources and styles, its MIT license and the engine compiled to WebAssembly. `core/SOURCE` names the tag and commit. CI rebuilds `core/` from that tag with `scripts/core.sh check` and fails unless the result is byte-identical, so `core/` cannot drift from the published selfsync.
 
 Building the plugin needs only Node:
 

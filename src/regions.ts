@@ -19,3 +19,6 @@ export function defaultRegion(locale: string): Region {
 export function regionUrl(region: string): string {
   return URLS[region as Region] ?? "";
 }
+
+/** Адрес оферты; пусто — показывать только текст о принятии. */
+export const TERMS_URL = "";

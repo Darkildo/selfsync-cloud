@@ -1,5 +1,6 @@
-// Вкладка настроек: аккаунт, vault этого устройства, устройства аккаунта, тарифы
-// и версия ядра; затем разделы синхронизации открытого плагина как есть.
+// Вкладка настроек: аккаунт, фраза восстановления, vault этого устройства, входы
+// и устройства аккаунта, тарифы и версия ядра; затем разделы синхронизации
+// открытого плагина как есть.
 
 import { type App, Notice, type Setting } from "obsidian";
 
@@ -10,7 +11,7 @@ import { DiagnoseModal } from "../core/plugin/src/ui/diagnose.ts";
 import type { TariffView } from "./api.ts";
 import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
-import { AuthModal, ChangePasswordModal, CodeModal, InviteModal, PasswordPromptModal, VaultModal } from "./ui.ts";
+import { ChangePasswordModal, EmailPasswordModal, ExistingModal, InviteModal, PasswordPromptModal, StartModal, VaultModal } from "./ui.ts";
 
 /** Данные аккаунта старее — перечитать при открытии вкладки. */
 const STALE_MS = 30_000;
@@ -54,7 +55,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
       this.loading = false;
       this.loadedAt = Date.now();
       this.loadError = account.status === "rejected" ? errorText(account.reason) : "";
-      this.refresh();
+      this.cloudPlugin.accountChanged();
     });
   }
 
@@ -74,7 +75,10 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     const out: Section[] = [{ heading: t("settings.account"), rows: this.accountRows() }];
     const vault = this.vaultRows();
     if (vault.length > 0) out.push({ heading: t("settings.vault"), rows: vault });
-    if (this.cloudPlugin.cloud.account) out.push({ heading: t("settings.devices"), rows: this.deviceRows() });
+    if (this.cloudPlugin.cloud.account) {
+      out.push({ heading: t("settings.sessions"), rows: this.sessionRows() });
+      out.push({ heading: t("settings.devices"), rows: this.deviceRows() });
+    }
     const tariffs = this.tariffRows();
     if (tariffs.length > 0) out.push({ heading: t("settings.tariffs"), rows: tariffs });
     out.push(...keep);
@@ -91,22 +95,25 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     const a = cloud.account;
     const rows: Row[] = [];
     if (a) {
+      const name = a.email ?? t("account.anonymous", { id: a.id });
+      const desc = t("account.usage", {
+        tariff: a.tariff.title,
+        used: formatBytes(a.usage.bytes),
+        limit: limitText(a.tariff.bytes_hard, formatBytes),
+        vaults: `${a.usage.vaults}/${limitText(a.tariff.vaults)}`,
+        devices: `${a.usage.devices}/${limitText(a.tariff.devices)}`,
+      });
       rows.push({
-        name: a.email,
+        name,
+        desc,
         build: (s: Setting) => {
-          s.setName(a.email).setDesc(
-            t("account.usage", {
-              tariff: a.tariff.title,
-              used: formatBytes(a.usage.bytes),
-              limit: limitText(a.tariff.bytes_hard, formatBytes),
-              vaults: `${a.usage.vaults}/${limitText(a.tariff.vaults)}`,
-              devices: `${a.usage.devices}/${limitText(a.tariff.devices)}`,
-            }),
-          );
-          s.addButton((b) => b.setButtonText(t("account.changePassword")).onClick(() => new ChangePasswordModal(this.app, this.cloudPlugin).open()));
+          s.setName(name).setDesc(desc);
+          if (a.has_password) s.addButton((b) => b.setButtonText(t("account.changePassword")).onClick(() => new ChangePasswordModal(this.app, this.cloudPlugin).open()));
+          else if (cloud.accountKey()) s.addButton((b) => b.setButtonText(t("account.addEmail")).onClick(() => new EmailPasswordModal(this.app, this.cloudPlugin).open()));
           s.addButton((b) => b.setButtonText(t("account.logout")).onClick(() => void cloud.logout()));
         },
       });
+      rows.push(this.phraseRow());
       rows.push({
         name: t("account.delete"),
         desc: t("account.deleteDesc"),
@@ -114,38 +121,51 @@ export class CloudSettingTab extends SelfsyncSettingTab {
           s.setName(t("account.delete")).setDesc(t("account.deleteDesc"));
           s.addButton((b) =>
             b.setButtonText(t("account.delete")).onClick(() => {
-              new PasswordPromptModal(this.app, t("account.delete"), t("account.deleteConfirm"), async (pw) => {
-                await cloud.deleteAccount(pw);
-                new Notice(t("account.deleted"));
-                return null;
-              }).open();
+              if (a.has_password) {
+                new PasswordPromptModal(this.app, t("account.delete"), t("account.deleteConfirm"), async (pw) => {
+                  await cloud.deleteAccount(pw);
+                  new Notice(t("account.deleted"));
+                  return null;
+                }).open();
+                return;
+              }
+              void confirm(this.app, t("account.deleteConfirmKey"), t("account.delete")).then(async (ok) => {
+                if (!ok) return;
+                try {
+                  await cloud.deleteAccount();
+                  new Notice(t("account.deleted"));
+                } catch (e) {
+                  new Notice(errorText(e));
+                }
+              });
             }),
           );
         },
       });
     } else if (this.s.session) {
-      // Сессия есть, а аккаунт не загрузился: не предлагать регистрацию заново.
+      // Сессия есть, а аккаунт не загрузился: не предлагать начать заново.
+      const label = this.s.email || (this.s.accountId ? t("account.anonymous", { id: this.s.accountId }) : t("settings.account"));
       const desc = this.loadError ? t("account.unavailable", { error: this.loadError }) : t("account.loading");
       rows.push({
-        name: this.s.email,
+        name: label,
         desc,
         build: (s: Setting) => {
-          s.setName(this.s.email).setDesc(desc);
+          s.setName(label).setDesc(desc);
           if (this.loadError) s.addButton((b) => b.setButtonText(t("account.retry")).onClick(() => this.reload()));
           s.addButton((b) => b.setButtonText(t("account.logout")).onClick(() => void cloud.logout()));
         },
       });
+      if (cloud.pendingPhrase()) rows.push(this.phraseRow());
     } else {
-      const invited = this.s.vault !== "" && !this.s.session;
+      const invited = this.s.vault !== "";
       const desc = invited ? t("account.invited", { label: this.s.vaultLabel }) : t("account.intro");
       rows.push({
         name: "",
         desc,
         build: (s: Setting) => {
           s.setDesc(desc);
-          if (!invited) s.addButton((b) => b.setButtonText(t("account.register")).setCta().onClick(() => new AuthModal(this.app, this.cloudPlugin, "register").open()));
-          s.addButton((b) => b.setButtonText(t("account.login")).onClick(() => new AuthModal(this.app, this.cloudPlugin, "login").open()));
-          if (!this.s.vault) s.addButton((b) => b.setButtonText(t("account.haveCode")).onClick(() => new CodeModal(this.app, this.cloudPlugin).open()));
+          if (!invited) s.addButton((b) => b.setButtonText(t("start.begin")).setCta().onClick(() => new StartModal(this.app, this.cloudPlugin).open()));
+          s.addButton((b) => b.setButtonText(t("start.signIn")).onClick(() => new ExistingModal(this.app, this.cloudPlugin).open()));
         },
       });
     }
@@ -178,6 +198,27 @@ export class CloudSettingTab extends SelfsyncSettingTab {
       },
     });
     return rows;
+  }
+
+  /** Фраза восстановления: записана ли, показать или создать новую. */
+  private phraseRow(): Row {
+    const cloud = this.cloudPlugin.cloud;
+    const status = cloud.phraseStatus();
+    const desc = {
+      confirmed: t("phrase.statusConfirmed"),
+      "pending-here": t("phrase.statusHere"),
+      "pending-elsewhere": t("phrase.statusElsewhere"),
+      unknown: "",
+    }[status];
+    return {
+      name: t("phrase.title"),
+      desc,
+      build: (s: Setting) => {
+        s.setName(t("phrase.title")).setDesc(desc);
+        if (status === "pending-here") s.addButton((b) => b.setButtonText(t("phrase.show")).setCta().onClick(() => this.cloudPlugin.showPhrase()));
+        else if (cloud.accountKey()) s.addButton((b) => b.setButtonText(t("phrase.new")).onClick(() => this.cloudPlugin.showPhrase()));
+      },
+    };
   }
 
   private vaultRows(): Row[] {
@@ -224,6 +265,54 @@ export class CloudSettingTab extends SelfsyncSettingTab {
         },
       },
     ];
+  }
+
+  /** Входы в аккаунт (сессии): с какого устройства, когда; отзыв и «выйти везде». */
+  private sessionRows(): Row[] {
+    const cloud = this.cloudPlugin.cloud;
+    const a = cloud.account;
+    if (!a) return [];
+    const rows: Row[] = a.sessions.map((x) => {
+      const name = x.current ? t("devices.current", { name: x.name }) : x.name;
+      const desc = t("sessions.lastSeen", { client: x.client || "—", time: x.last_seen ? new Date(x.last_seen).toLocaleString() : "—" });
+      return {
+        name,
+        desc,
+        build: (s: Setting) => {
+          s.setName(name).setDesc(desc);
+          if (x.current) return;
+          s.addButton((b) =>
+            b.setButtonText(t("sessions.revoke")).onClick(async () => {
+              try {
+                await cloud.revokeSession(x.id);
+              } catch (e) {
+                s.setDesc(errorText(e));
+              }
+            }),
+          );
+        },
+      };
+    });
+    if (a.sessions.length > 1) {
+      rows.push({
+        name: t("sessions.logoutAll"),
+        desc: t("sessions.logoutAllDesc"),
+        build: (s: Setting) => {
+          s.setName(t("sessions.logoutAll")).setDesc(t("sessions.logoutAllDesc"));
+          s.addButton((b) =>
+            b.setButtonText(t("sessions.logoutAll")).onClick(async () => {
+              if (!(await confirm(this.app, t("sessions.logoutAllConfirm"), t("sessions.logoutAll")))) return;
+              try {
+                await cloud.logoutAll();
+              } catch (e) {
+                new Notice(errorText(e));
+              }
+            }),
+          );
+        },
+      });
+    }
+    return rows;
   }
 
   private deviceRows(): Row[] {

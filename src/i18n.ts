@@ -13,7 +13,7 @@ const en = {
   "settings.tariffs": "Plans",
   "settings.deviceDesc": "Shown in conflict copies. The account device list gets it when the device connects to a vault.",
 
-  "account.intro": "Sync this vault through Selfsync Cloud. Notes are encrypted on your devices: the service cannot read them.",
+  "account.intro": "Sync this vault through Selfsync Cloud. Notes are encrypted on your devices: the service cannot read them. No email needed.",
   "account.register": "Sign up",
   "account.login": "Sign in",
   "account.haveCode": "I have an invite code",
@@ -60,7 +60,7 @@ const en = {
   "auth.needSignIn": "Sign in to the account on this device first",
 
   "phrase.title": "Recovery phrase",
-  "phrase.desc": "These 24 words restore the account if you forget the password. They are shown once: write them down and keep them apart from the password. Without the phrase and the password, nobody (the service included) can restore your notes.",
+  "phrase.desc": "These 24 words sign in to the account from any device and restore it if the password is forgotten or every device is lost. Write them down and keep them apart from the password. Without the phrase nobody (the service included) can restore your notes.",
   "phrase.copy": "Copy",
   "phrase.written": "I have written the phrase down",
   "phrase.done": "Done",
@@ -74,7 +74,7 @@ const en = {
 
   "vault.connected": "“{label}”",
   "vault.connectedDesc": "Encrypted, synced through Selfsync Cloud.",
-  "vault.invite": "Invite a device",
+  "vault.invite": "Connect a device",
   "vault.disconnect": "Disconnect this device",
   "vault.disconnectConfirm": "Disconnect this device from the vault? Files here stay, sync stops.",
   "vault.disconnectOffline": "The device could not be revoked on the service ({error}). Disconnect it only here? It stays in the account device list until you revoke it there.",
@@ -89,9 +89,9 @@ const en = {
   "vault.limitReached": "The plan allows no more vaults",
   "devices.limit": "The plan allows no more devices: revoke one in the settings",
 
-  "invite.title": "Invite a device",
-  "invite.desc": "Scan the code with the phone camera, or enter the text code in Selfsync Cloud on the new device (it will ask for the account password). Valid until {until}, once.",
-  "invite.descNoKey": "Scan the code with the phone camera, or enter the text code in Selfsync Cloud on the new device. Either way it will ask for the account password: this device is not signed in. Valid until {until}, once.",
+  "invite.title": "Connect a device",
+  "invite.desc": "Scan the code with the new device’s camera: it opens Obsidian and signs in at once. Or enter the text code there under “Enter a code”; it will then ask for {how}. Valid until {until}, once.",
+  "invite.descNoKey": "Scan the code with the new device’s camera, or enter the text code there under “Enter a code”. Either way it will ask for {how}: the key is not on this device. Valid until {until}, once.",
   "invite.code": "Code: {code}",
   "invite.copy": "Copy the code",
 
@@ -121,8 +121,75 @@ const en = {
 
   "start.title": "Selfsync Cloud",
   "cmd.account": "Account and sign in",
-  "cmd.invite": "Invite a device",
+  "cmd.invite": "Connect a device",
 
+  "settings.sessions": "Signed-in devices",
+
+  "account.anonymous": "Account #{id}",
+  "account.addEmail": "Add email and password",
+  "account.deleteConfirmKey": "Delete the account with all data on the server? This cannot be undone. Notes on your devices stay.",
+
+  "region.desc": "Where the account and the encrypted data are stored. Cannot be changed later.",
+
+  "start.desc": "One press creates an account and encrypts this vault; no email or password needed. The recovery phrase appears in the settings: write it down soon, it is the only way back in.",
+  "start.begin": "Start syncing",
+  "start.terms": "By pressing Start you accept the",
+  "start.termsLink": "terms of service",
+  "start.haveAccount": "Already have an account?",
+  "start.signIn": "Sign in",
+  "start.done": "The vault is being encrypted and uploaded. Write down the recovery phrase: Settings → Selfsync Cloud.",
+  "start.alreadySignedIn": "This device is already signed in: sign out first",
+
+  "existing.title": "Sign in to an existing account",
+  "existing.qr": "Easiest: on a connected device press “Connect a device” and scan the QR code with this device’s camera. The link opens Obsidian and signs in at once.",
+  "existing.code": "Code from another device",
+  "existing.codeDesc": "Type the code shown under the QR. Then the account password, or the recovery phrase if the account has no password.",
+  "existing.codeButton": "Enter a code",
+  "existing.phrase": "Recovery phrase",
+  "existing.phraseDesc": "The 24 words sign in without any other device.",
+  "existing.phraseButton": "Enter the phrase",
+  "existing.password": "Email and password",
+  "existing.passwordDesc": "If you added them to the account.",
+
+  "phraseLogin.title": "Sign in with the recovery phrase",
+  "phraseLogin.desc": "Enter the 24 words. The phrase opens the encryption key on this device; the service never sees it.",
+
+  "loginCode.title": "Sign in with a code",
+  "loginCode.desc": "Enter the code from “Connect a device” on another device. Without the QR, the key is opened by the account password or the recovery phrase.",
+  "loginCode.code": "Code",
+
+  "phrase.bar": "⚠ recovery phrase",
+  "phrase.reminder": "Write down the recovery phrase: without it a lost device means lost notes. Click to show it.",
+  "phrase.later": "Later",
+  "phrase.show": "Show",
+  "phrase.new": "Create a new phrase",
+  "phrase.newConfirm": "Create a new recovery phrase? The old one stops working. Write the new one down at once.",
+  "phrase.needKey": "The encryption key is not on this device: sign in with the QR code or the phrase first.",
+  "phrase.statusConfirmed": "Written down. Keep it apart from the password: it is the only way back in if devices are lost.",
+  "phrase.statusHere": "Not written down yet. Without it a lost device means lost notes.",
+  "phrase.statusElsewhere": "Not written down. The words are on the device that created the account; or create a new phrase here.",
+
+  "invite.phraseFirst": "The recovery phrase is not written down yet.",
+  "invite.phraseShow": "Show it",
+  "invite.codePassword": "the account password",
+  "invite.codePhrase": "the recovery phrase",
+
+  "sessions.lastSeen": "{client} · last seen {time}",
+  "sessions.revoke": "Sign out",
+  "sessions.logoutAll": "Sign out everywhere",
+  "sessions.logoutAllDesc": "Closes every sign-in except this one. Devices keep syncing.",
+  "sessions.logoutAllConfirm": "Sign out on all other devices?",
+
+  "unlock.phraseDesc": "The vault is encrypted and the key is not on this device. The account has no password: sign in with the recovery phrase or scan the QR code from a connected device.",
+
+  "email.title": "Add email and password",
+  "email.desc": "Lets you sign in by typing them on any device and protects actions with the password. One password for the account and the encryption. It never leaves this device.",
+  "email.submit": "Add",
+  "email.done": "Email and password added",
+  "auth.noPassword": "The account has no password: add one in the settings",
+  "auth.hasEmail": "The account already has an email",
+
+  "cmd.phrase": "Recovery phrase",
   "error.generic": "Error: {message}",
   "error.badKdf": "The service asked for unsafe password protection settings. Nothing was sent; update the plugin or contact support.",
 };
@@ -139,7 +206,7 @@ const ru: Record<Key, string> = {
   "settings.tariffs": "Тарифы",
   "settings.deviceDesc": "Видно в конфликтных копиях. В список устройств аккаунта попадает при подключении к vault'у.",
 
-  "account.intro": "Синхронизация этого vault'а через Selfsync Cloud. Заметки шифруются на ваших устройствах: сервис не может их прочитать.",
+  "account.intro": "Синхронизация этого vault'а через Selfsync Cloud. Заметки шифруются на ваших устройствах: сервис не может их прочитать. Email не нужен.",
   "account.register": "Зарегистрироваться",
   "account.login": "Войти",
   "account.haveCode": "У меня есть код приглашения",
@@ -186,7 +253,7 @@ const ru: Record<Key, string> = {
   "auth.needSignIn": "Сначала войдите в аккаунт на этом устройстве",
 
   "phrase.title": "Фраза восстановления",
-  "phrase.desc": "Эти 24 слова вернут доступ к аккаунту, если вы забудете пароль. Они показываются один раз: запишите их и храните отдельно от пароля. Без фразы и пароля восстановить заметки не сможет никто, включая сервис.",
+  "phrase.desc": "Эти 24 слова входят в аккаунт с любого устройства и возвращают его, если пароль забыт или все устройства потеряны. Запишите их и храните отдельно от пароля. Без фразы восстановить заметки не сможет никто, включая сервис.",
   "phrase.copy": "Скопировать",
   "phrase.written": "Я записал(а) фразу",
   "phrase.done": "Готово",
@@ -200,7 +267,7 @@ const ru: Record<Key, string> = {
 
   "vault.connected": "«{label}»",
   "vault.connectedDesc": "Зашифрован, синхронизируется через Selfsync Cloud.",
-  "vault.invite": "Пригласить устройство",
+  "vault.invite": "Подключить устройство",
   "vault.disconnect": "Отключить это устройство",
   "vault.disconnectConfirm": "Отключить это устройство от vault'а? Файлы здесь останутся, синхронизация остановится.",
   "vault.disconnectOffline": "Не удалось отозвать устройство в сервисе ({error}). Отключить только здесь? Устройство останется в списке аккаунта, пока вы не отзовёте его там.",
@@ -215,9 +282,9 @@ const ru: Record<Key, string> = {
   "vault.limitReached": "Тариф не позволяет больше vault'ов",
   "devices.limit": "Тариф не позволяет больше устройств: отзовите одно в настройках",
 
-  "invite.title": "Пригласить устройство",
-  "invite.desc": "Наведите камеру телефона на код или введите текстовый код в Selfsync Cloud на новом устройстве (оно спросит пароль аккаунта). Действует до {until}, один раз.",
-  "invite.descNoKey": "Наведите камеру телефона на код или введите текстовый код в Selfsync Cloud на новом устройстве. В обоих случаях оно спросит пароль аккаунта: на этом устройстве вход не выполнен. Действует до {until}, один раз.",
+  "invite.title": "Подключить устройство",
+  "invite.desc": "Наведите камеру нового устройства на код: откроется Obsidian и сразу войдёт. Или введите текстовый код там в «Ввести код»; тогда оно спросит {how}. Действует до {until}, один раз.",
+  "invite.descNoKey": "Наведите камеру нового устройства на код или введите текстовый код там в «Ввести код». В обоих случаях оно спросит {how}: ключа на этом устройстве нет. Действует до {until}, один раз.",
   "invite.code": "Код: {code}",
   "invite.copy": "Скопировать код",
 
@@ -247,8 +314,75 @@ const ru: Record<Key, string> = {
 
   "start.title": "Selfsync Cloud",
   "cmd.account": "Аккаунт и вход",
-  "cmd.invite": "Пригласить устройство",
+  "cmd.invite": "Подключить устройство",
 
+  "settings.sessions": "Входы в аккаунт",
+
+  "account.anonymous": "Аккаунт #{id}",
+  "account.addEmail": "Добавить email и пароль",
+  "account.deleteConfirmKey": "Удалить аккаунт со всеми данными на сервере? Это необратимо. Заметки на устройствах останутся.",
+
+  "region.desc": "Где хранятся аккаунт и зашифрованные данные. Потом не поменять.",
+
+  "start.desc": "Одно нажатие создаёт аккаунт и шифрует этот vault; email и пароль не нужны. Фраза восстановления появится в настройках: запишите её поскорее, это единственный путь назад.",
+  "start.begin": "Начать синхронизацию",
+  "start.terms": "Нажимая «Начать», вы принимаете",
+  "start.termsLink": "условия оферты",
+  "start.haveAccount": "Уже есть аккаунт?",
+  "start.signIn": "Войти",
+  "start.done": "Vault шифруется и отправляется. Запишите фразу восстановления: Настройки → Selfsync Cloud.",
+  "start.alreadySignedIn": "На этом устройстве уже выполнен вход: сначала выйдите",
+
+  "existing.title": "Вход в существующий аккаунт",
+  "existing.qr": "Проще всего: на подключённом устройстве нажмите «Подключить устройство» и отсканируйте QR-код камерой этого устройства. Ссылка откроет Obsidian и сразу войдёт.",
+  "existing.code": "Код с другого устройства",
+  "existing.codeDesc": "Введите код, показанный под QR. Затем пароль аккаунта, а если пароля нет — фразу восстановления.",
+  "existing.codeButton": "Ввести код",
+  "existing.phrase": "Фраза восстановления",
+  "existing.phraseDesc": "24 слова входят без других устройств.",
+  "existing.phraseButton": "Ввести фразу",
+  "existing.password": "Email и пароль",
+  "existing.passwordDesc": "Если вы добавили их в аккаунт.",
+
+  "phraseLogin.title": "Вход по фразе восстановления",
+  "phraseLogin.desc": "Введите 24 слова. Фраза открывает ключ шифрования на этом устройстве; сервис её не видит.",
+
+  "loginCode.title": "Вход по коду",
+  "loginCode.desc": "Введите код из «Подключить устройство» на другом устройстве. Без QR ключ откроет пароль аккаунта или фраза восстановления.",
+  "loginCode.code": "Код",
+
+  "phrase.bar": "⚠ фраза восстановления",
+  "phrase.reminder": "Запишите фразу восстановления: без неё потеря устройства — потеря заметок. Нажмите, чтобы показать.",
+  "phrase.later": "Позже",
+  "phrase.show": "Показать",
+  "phrase.new": "Создать новую фразу",
+  "phrase.newConfirm": "Создать новую фразу восстановления? Прежняя перестанет действовать. Сразу запишите новую.",
+  "phrase.needKey": "Ключа шифрования на этом устройстве нет: сначала войдите по QR или фразе.",
+  "phrase.statusConfirmed": "Записана. Храните отдельно от пароля: это единственный путь назад, если устройства пропадут.",
+  "phrase.statusHere": "Ещё не записана. Без неё потеря устройства — потеря заметок.",
+  "phrase.statusElsewhere": "Не записана. Слова — на устройстве, создавшем аккаунт; или создайте новую фразу здесь.",
+
+  "invite.phraseFirst": "Фраза восстановления ещё не записана.",
+  "invite.phraseShow": "Показать",
+  "invite.codePassword": "пароль аккаунта",
+  "invite.codePhrase": "фразу восстановления",
+
+  "sessions.lastSeen": "{client} · на связи {time}",
+  "sessions.revoke": "Выйти",
+  "sessions.logoutAll": "Выйти везде",
+  "sessions.logoutAllDesc": "Закрывает все входы, кроме этого. Устройства продолжают синхронизироваться.",
+  "sessions.logoutAllConfirm": "Выйти на всех остальных устройствах?",
+
+  "unlock.phraseDesc": "Vault зашифрован, а ключа на этом устройстве нет. У аккаунта нет пароля: войдите фразой восстановления или отсканируйте QR с подключённого устройства.",
+
+  "email.title": "Добавить email и пароль",
+  "email.desc": "Позволяет входить вводом на любом устройстве и защищает действия паролем. Один пароль для аккаунта и шифрования. С устройства он не уходит.",
+  "email.submit": "Добавить",
+  "email.done": "Email и пароль добавлены",
+  "auth.noPassword": "У аккаунта нет пароля: добавьте его в настройках",
+  "auth.hasEmail": "У аккаунта уже есть email",
+
+  "cmd.phrase": "Фраза восстановления",
   "error.generic": "Ошибка: {message}",
   "error.badKdf": "Сервис запросил небезопасные параметры защиты пароля. Ничего не отправлено; обновите плагин или напишите в поддержку.",
 };
@@ -286,6 +420,8 @@ export function errorText(e: unknown): string {
     vault_limit: "vault.limitReached",
     no_account: "auth.needSignIn",
     no_account_key: "auth.needSignIn",
+    no_password: "auth.noPassword",
+    has_email: "auth.hasEmail",
   };
   const k = code ? known[code] : undefined;
   if (k) return t(k);

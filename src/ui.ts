@@ -1,6 +1,6 @@
-// Окна облака: вход и регистрация (с тарифами и фразой восстановления),
-// восстановление по фразе, выбор vault'а, приглашение устройства (QR и код),
-// подключение по коду, пароль аккаунта.
+// Окна облака: старт (аккаунт одним нажатием или вход в существующий), вход кодом,
+// фразой и паролем, фраза восстановления, выбор vault'а, код для нового устройства,
+// пароль аккаунта.
 
 import { type App, Modal, Notice, Setting } from "obsidian";
 
@@ -10,8 +10,7 @@ import { qrSvg } from "../core/plugin/src/ui/join.ts";
 import { phraseError } from "../core/plugin/src/ui/recovery.ts";
 import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
-import { REGIONS } from "./regions.ts";
-import { tariffLimits } from "./settings.ts";
+import { REGIONS, TERMS_URL } from "./regions.ts";
 
 /** Порог стойкости пароля, бит (как у пароля шифрования в selfsync). */
 const WEAK_BITS = 50;
@@ -21,7 +20,7 @@ function weak(password: string): boolean {
   return password.length < 10 || passwordStrength(password) < WEAK_BITS;
 }
 
-/** Код приглашения группами по четыре: проще продиктовать и ввести. */
+/** Код группами по четыре: проще продиктовать и ввести. */
 export function formatCode(code: string): string {
   return code.match(/.{1,4}/g)?.join("-") ?? code;
 }
@@ -53,14 +52,17 @@ abstract class Form extends Modal {
   }
 
   protected region(get: () => string, set: (v: string) => void): void {
-    new Setting(this.contentEl).setName(t("region.name")).addDropdown((d) => {
-      for (const r of REGIONS) d.addOption(r, r === "cis" ? t("region.cis") : t("region.eu"));
-      d.setValue(get()).onChange(set);
-    });
+    new Setting(this.contentEl)
+      .setName(t("region.name"))
+      .setDesc(t("region.desc"))
+      .addDropdown((d) => {
+        for (const r of REGIONS) d.addOption(r, r === "cis" ? t("region.cis") : t("region.eu"));
+        d.setValue(get()).onChange(set);
+      });
   }
 
   /** Отправка: ошибка остаётся в окне, успех закрывает его. */
-  private async run(): Promise<void> {
+  protected async run(): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     this.error.setText(t("auth.working"));
@@ -85,8 +87,49 @@ abstract class Form extends Modal {
   }
 }
 
-/** Первый шаг: регистрация, вход, код приглашения или восстановление. */
-export class StartModal extends Modal {
+/** Первый экран: начать одним нажатием (регион явно) или войти в существующий аккаунт. */
+export class StartModal extends Form {
+  private regionId: string;
+
+  constructor(
+    app: App,
+    private plugin: SelfsyncCloudPlugin,
+  ) {
+    super(app);
+    this.regionId = plugin.settings.region;
+  }
+
+  override onOpen(): void {
+    this.header(t("start.title"), t("start.desc"));
+    this.region(
+      () => this.regionId,
+      (v) => (this.regionId = v),
+    );
+    const terms = this.contentEl.createEl("p", { cls: "setting-item-description" });
+    terms.appendText(`${t("start.terms")} `);
+    if (TERMS_URL) terms.createEl("a", { text: t("start.termsLink"), href: TERMS_URL });
+    else terms.appendText(t("start.termsLink"));
+    this.footer(t("start.begin"));
+    new Setting(this.contentEl).setName(t("start.haveAccount")).addButton((b) =>
+      b.setButtonText(t("start.signIn")).onClick(() => {
+        this.close();
+        new ExistingModal(this.app, this.plugin).open();
+      }),
+    );
+  }
+
+  protected async submit(): Promise<string | null> {
+    const cloud = this.plugin.cloud;
+    if (!cloud.server(this.regionId)) return t("account.notOpen");
+    if (this.plugin.settings.session) return t("start.alreadySignedIn");
+    await cloud.start(this.regionId, this.app.vault.getName());
+    new Notice(t("start.done"), 10000);
+    return null;
+  }
+}
+
+/** Вход в существующий аккаунт: QR с другого устройства, код, фраза или email с паролем. */
+export class ExistingModal extends Modal {
   constructor(
     app: App,
     private plugin: SelfsyncCloudPlugin,
@@ -95,16 +138,24 @@ export class StartModal extends Modal {
   }
 
   override onOpen(): void {
-    this.setTitle(t("start.title"));
-    this.contentEl.createEl("p", { text: t("account.intro") });
+    this.setTitle(t("existing.title"));
+    this.contentEl.createEl("p", { text: t("existing.qr") });
     const go = (m: Modal) => {
       this.close();
       m.open();
     };
     new Setting(this.contentEl)
-      .addButton((b) => b.setButtonText(t("account.register")).setCta().onClick(() => go(new AuthModal(this.app, this.plugin, "register"))))
-      .addButton((b) => b.setButtonText(t("account.login")).onClick(() => go(new AuthModal(this.app, this.plugin, "login"))))
-      .addButton((b) => b.setButtonText(t("account.haveCode")).onClick(() => go(new CodeModal(this.app, this.plugin))));
+      .setName(t("existing.code"))
+      .setDesc(t("existing.codeDesc"))
+      .addButton((b) => b.setButtonText(t("existing.codeButton")).setCta().onClick(() => go(new LoginCodeModal(this.app, this.plugin))));
+    new Setting(this.contentEl)
+      .setName(t("existing.phrase"))
+      .setDesc(t("existing.phraseDesc"))
+      .addButton((b) => b.setButtonText(t("existing.phraseButton")).onClick(() => go(new PhraseLoginModal(this.app, this.plugin))));
+    new Setting(this.contentEl)
+      .setName(t("existing.password"))
+      .setDesc(t("existing.passwordDesc"))
+      .addButton((b) => b.setButtonText(t("account.login")).onClick(() => go(new LoginModal(this.app, this.plugin))));
   }
 
   override onClose(): void {
@@ -112,17 +163,27 @@ export class StartModal extends Modal {
   }
 }
 
-/** Регистрация и вход. После них — фраза (регистрация) и выбор vault'а. */
-export class AuthModal extends Form {
+/** После входа: подключить vault из кода или выбрать. */
+function afterSignIn(app: App, plugin: SelfsyncCloudPlugin): void {
+  if (plugin.settings.vault) return;
+  if (plugin.settings.pendingVault) {
+    void plugin.cloud.unlock().then((ok) => {
+      if (!ok) new VaultModal(app, plugin).open();
+    });
+    return;
+  }
+  new VaultModal(app, plugin).open();
+}
+
+/** Вход по email и паролю — для аккаунтов, где они заданы. */
+export class LoginModal extends Form {
   private email: string;
   private password = "";
-  private confirm = "";
   private regionId: string;
 
   constructor(
     app: App,
     private plugin: SelfsyncCloudPlugin,
-    private mode: "register" | "login",
   ) {
     super(app);
     this.email = plugin.settings.email;
@@ -130,83 +191,31 @@ export class AuthModal extends Form {
   }
 
   override onOpen(): void {
-    const reg = this.mode === "register";
-    this.header(reg ? t("auth.registerTitle") : t("auth.loginTitle"));
+    this.header(t("auth.loginTitle"));
     this.region(
       () => this.regionId,
-      (v) => {
-        this.regionId = v;
-        if (reg) void this.showTariffs();
-      },
+      (v) => (this.regionId = v),
     );
     this.text(t("auth.email"), this.email, (v) => (this.email = v.trim()));
-    const hint = reg ? t("auth.passwordDesc") : undefined;
-    this.text(t("auth.password"), "", (v) => (this.password = v), true, hint);
-    if (reg) {
-      this.text(t("auth.confirm"), "", (v) => (this.confirm = v), true);
-      this.tariffs = this.contentEl.createDiv();
-      void this.showTariffs();
-    } else {
-      this.contentEl.createEl("a", { text: t("auth.forgot"), href: "#" }).addEventListener("click", (e) => {
-        e.preventDefault();
-        this.close();
-        new RecoverModal(this.app, this.plugin, this.email, this.regionId).open();
-      });
-    }
-    this.footer(reg ? t("account.register") : t("account.login"));
-  }
-
-  private tariffs: HTMLElement | undefined;
-  /** Номер последнего запроса тарифов: ответ по прежнему региону не рисуется. */
-  private tariffsSeq = 0;
-
-  /** Тарифы региона: недоступные — затемнены с пометкой «скоро». */
-  private async showTariffs(): Promise<void> {
-    const el = this.tariffs;
-    if (!el) return;
-    const seq = ++this.tariffsSeq;
-    el.empty();
-    if (!this.plugin.cloud.server(this.regionId)) {
-      el.createEl("p", { text: t("account.notOpen"), cls: "mod-warning" });
-      return;
-    }
-    try {
-      const info = await this.plugin.cloud.loadInfo(this.regionId);
-      if (seq !== this.tariffsSeq) return;
-      el.empty();
-      if (!info.registration_open) el.createEl("p", { text: t("auth.closed"), cls: "mod-warning" });
-      for (const x of info.tariffs) {
-        const s = new Setting(el).setName([x.title, x.price, x.status === "soon" ? `· ${t("tariff.soon")}` : ""].filter(Boolean).join(" ")).setDesc(tariffLimits(x));
-        if (x.status === "soon") s.settingEl.addClass("selfsync-cloud-soon");
-      }
-    } catch (e) {
-      if (seq !== this.tariffsSeq) return;
-      el.empty();
-      el.createEl("p", { text: errorText(e), cls: "mod-warning" });
-    }
+    this.text(t("auth.password"), "", (v) => (this.password = v), true);
+    this.contentEl.createEl("a", { text: t("auth.forgot"), href: "#" }).addEventListener("click", (e) => {
+      e.preventDefault();
+      this.close();
+      new RecoverModal(this.app, this.plugin, this.email, this.regionId).open();
+    });
+    this.footer(t("account.login"));
   }
 
   protected async submit(): Promise<string | null> {
     const cloud = this.plugin.cloud;
     if (!cloud.server(this.regionId)) return t("account.notOpen");
-    // Устройство уже синхронизирует vault — выбирать нечего.
-    const pick = () => {
-      if (!this.plugin.settings.vault) new VaultModal(this.app, this.plugin).open();
-    };
-    if (this.mode === "login") {
-      await cloud.login(this.regionId, this.email, this.password);
-      pick();
-      return null;
-    }
-    if (this.password !== this.confirm) return t("auth.mismatch");
-    if (weak(this.password)) return t("auth.weak");
-    const words = await cloud.register(this.regionId, this.email, this.password);
-    new PhraseModal(this.app, words, pick).open();
+    await cloud.login(this.regionId, this.email, this.password);
+    afterSignIn(this.app, this.plugin);
     return null;
   }
 }
 
-/** Фраза восстановления: показывается один раз, закрыть — только записав. */
+/** Фраза восстановления: показывается, закрыть — только записав. */
 export class PhraseModal extends Modal {
   private written = false;
   private done = false;
@@ -227,26 +236,33 @@ export class PhraseModal extends Modal {
     for (const w of this.words) list.createEl("li", { text: w });
     new Setting(contentEl).addButton((b) => b.setButtonText(t("phrase.copy")).onClick(() => void navigator.clipboard.writeText(this.words.join(" "))));
     new Setting(contentEl).setName(t("phrase.written")).addToggle((x) => x.onChange((v) => (this.written = v)));
-    new Setting(contentEl).addButton((b) =>
-      b
-        .setButtonText(t("phrase.done"))
-        .setCta()
-        .onClick(() => {
-          if (!this.written) return;
-          this.done = true;
-          this.close();
-          this.then();
-        }),
-    );
+    new Setting(contentEl)
+      .addButton((b) => b.setButtonText(t("phrase.later")).onClick(() => this.closeLater()))
+      .addButton((b) =>
+        b
+          .setButtonText(t("phrase.done"))
+          .setCta()
+          .onClick(() => {
+            if (!this.written) return;
+            this.done = true;
+            this.close();
+            this.then();
+          }),
+      );
+  }
+
+  /** Отложить: слова остаются на устройстве, напоминание продолжает висеть. */
+  private closeLater(): void {
+    this.done = true;
+    this.close();
   }
 
   override onClose(): void {
     // Слова не держим в DOM дольше нужного.
     this.contentEl.empty();
     if (this.done) return;
-    // Esc и клик мимо окна тоже закрывают его, а фраза больше нигде не покажется.
+    // Esc и клик мимо окна: фраза остаётся на устройстве, показать можно снова.
     if (this.written) this.then();
-    else new PhraseModal(this.app, this.words, this.then).open();
   }
 }
 
@@ -287,7 +303,45 @@ export class RecoverModal extends Form {
     await this.plugin.cloud.recover(this.regionId, this.email, this.phrase, this.password);
     new Notice(t("recover.done"));
     if (this.plugin.settings.vault) await this.plugin.cloud.unlock();
-    else new VaultModal(this.app, this.plugin).open();
+    else afterSignIn(this.app, this.plugin);
+    return null;
+  }
+}
+
+/** Вход фразой восстановления: без email и пароля. */
+export class PhraseLoginModal extends Form {
+  private phrase = "";
+  private regionId: string;
+
+  constructor(
+    app: App,
+    private plugin: SelfsyncCloudPlugin,
+  ) {
+    super(app);
+    this.regionId = plugin.settings.region;
+  }
+
+  override onOpen(): void {
+    this.header(t("phraseLogin.title"), t("phraseLogin.desc"));
+    this.region(
+      () => this.regionId,
+      (v) => (this.regionId = v),
+    );
+    new Setting(this.contentEl).setName(t("recover.phrase")).addTextArea((x) => {
+      x.inputEl.rows = 4;
+      x.onChange((v) => (this.phrase = v));
+    });
+    this.footer(t("account.login"));
+  }
+
+  protected async submit(): Promise<string | null> {
+    const bad = phraseError(this.phrase);
+    if (bad) return bad;
+    const cloud = this.plugin.cloud;
+    if (!cloud.server(this.regionId)) return t("account.notOpen");
+    await cloud.loginPhrase(this.regionId, this.phrase);
+    if (this.plugin.settings.vault) await cloud.unlock();
+    else afterSignIn(this.app, this.plugin);
     return null;
   }
 }
@@ -344,8 +398,8 @@ export class VaultModal extends Modal {
   }
 }
 
-/** Приглашение: QR (с паролем vault'а — устройство откроет vault сразу) и
- *  текстовый код (без него — спросит пароль аккаунта). */
+/** Код для нового устройства: QR с ключом аккаунта (устройство войдёт сразу) и
+ *  текстовый код (без ключа — спросит пароль или фразу). */
 export class InviteModal extends Modal {
   constructor(
     app: App,
@@ -361,10 +415,22 @@ export class InviteModal extends Modal {
 
   private async show(): Promise<void> {
     const { contentEl } = this;
+    const cloud = this.plugin.cloud;
+    const status = cloud.phraseStatus();
+    if (status === "pending-here" || status === "pending-elsewhere") {
+      const warn = contentEl.createEl("p", { cls: "mod-warning" });
+      warn.appendText(`${t("invite.phraseFirst")} `);
+      warn.createEl("a", { text: t("invite.phraseShow"), href: "#" }).addEventListener("click", (e) => {
+        e.preventDefault();
+        this.close();
+        this.plugin.showPhrase();
+      });
+    }
     try {
-      const inv = await this.plugin.cloud.invite("");
+      const inv = await cloud.accountCode("");
       const until = new Date(inv.expiresAt).toLocaleTimeString();
-      contentEl.createEl("p", { text: t(inv.withKey ? "invite.desc" : "invite.descNoKey", { until }) });
+      const how = this.plugin.settings.hasPassword ? t("invite.codePassword") : t("invite.codePhrase");
+      contentEl.createEl("p", { text: t(inv.withKey ? "invite.desc" : "invite.descNoKey", { until, how }) });
       contentEl.appendChild(qrSvg(document, qrModules(inv.uri)));
       const code = formatCode(inv.code);
       new Setting(contentEl)
@@ -380,7 +446,56 @@ export class InviteModal extends Modal {
   }
 }
 
-/** Подключение по приглашению: из QR (всё уже есть) или вводом кода. */
+/** Вход кодом аккаунта: из QR (ключ в ссылке) или вводом кода. Без ключа в
+ *  ссылке ключ откроет пароль аккаунта или фраза. */
+export class LoginCodeModal extends Form {
+  private code: string;
+  private regionId: string;
+
+  constructor(
+    app: App,
+    private plugin: SelfsyncCloudPlugin,
+    private fromQr?: { server: string; code: string; key?: string; vault?: string },
+  ) {
+    super(app);
+    this.code = fromQr?.code ?? "";
+    this.regionId = plugin.settings.region;
+  }
+
+  override onOpen(): void {
+    this.header(t("loginCode.title"), this.fromQr ? undefined : t("loginCode.desc"));
+    const s = this.plugin.settings;
+    if (s.token) this.contentEl.createEl("p", { text: t("code.replaces", { label: s.vaultLabel || s.vault }), cls: "mod-warning" });
+    if (!this.fromQr) {
+      this.region(
+        () => this.regionId,
+        (v) => (this.regionId = v),
+      );
+      this.text(t("loginCode.code"), "", (v) => (this.code = v));
+    } else {
+      this.contentEl.createEl("p", { text: t("code.from", { code: formatCode(this.code), server: this.fromQr.server }) });
+    }
+    this.footer(t("code.submit"));
+  }
+
+  protected async submit(): Promise<string | null> {
+    const cloud = this.plugin.cloud;
+    const server = this.fromQr?.server ?? cloud.server(this.regionId);
+    if (!server) return t("account.notOpen");
+    if (!this.fromQr) this.plugin.settings.region = this.regionId;
+    const r = await cloud.redeemAccount(server, this.code, { key: this.fromQr?.key, vault: this.fromQr?.vault });
+    if (r.key) {
+      if (!r.vault) new VaultModal(this.app, this.plugin).open();
+      return null;
+    }
+    // Ключа в ссылке нет: пароль, если он есть у аккаунта, иначе фраза.
+    if (r.password) new UnlockModal(this.app, this.plugin).open();
+    else new PhraseLoginModal(this.app, this.plugin).open();
+    return null;
+  }
+}
+
+/** Подключение по приглашению в vault (плагин 0.1.x): из QR или вводом кода. */
 export class CodeModal extends Form {
   private code: string;
   private regionId: string;
@@ -423,7 +538,8 @@ export class CodeModal extends Form {
   }
 }
 
-/** Пароль аккаунта: открыть ключ на устройстве без сохранённого ключа. */
+/** Открыть ключ аккаунта на устройстве без сохранённого ключа: паролем, а у
+ *  аккаунта без пароля — фразой. */
 export class UnlockModal extends Form {
   private password = "";
 
@@ -435,6 +551,21 @@ export class UnlockModal extends Form {
   }
 
   override onOpen(): void {
+    const s = this.plugin.settings;
+    if (!s.hasPassword) {
+      this.header(t("unlock.title"), t("unlock.phraseDesc"));
+      new Setting(this.contentEl).addButton((b) =>
+        b
+          .setButtonText(t("existing.phraseButton"))
+          .setCta()
+          .onClick(() => {
+            this.close();
+            new PhraseLoginModal(this.app, this.plugin).open();
+          }),
+      );
+      this.error = this.contentEl.createEl("p", { cls: "mod-warning" });
+      return;
+    }
     this.header(t("unlock.title"), t("unlock.desc"));
     this.text(t("auth.password"), "", (v) => (this.password = v), true);
     this.contentEl.createEl("a", { text: t("auth.forgot"), href: "#" }).addEventListener("click", (e) => {
@@ -450,7 +581,7 @@ export class UnlockModal extends Form {
   }
 }
 
-/** Подтверждение паролем (удаление аккаунта). */
+/** Подтверждение паролем (удаление аккаунта у аккаунта с паролем). */
 export class PasswordPromptModal extends Form {
   private password = "";
 
@@ -500,6 +631,36 @@ export class ChangePasswordModal extends Form {
     if (weak(this.next)) return t("auth.weak");
     if (!(await this.plugin.cloud.changePassword(this.old, this.next))) return t("unlock.wrong");
     new Notice(t("account.passwordChanged"));
+    return null;
+  }
+}
+
+/** Email и пароль аккаунту без них: вход вводом на любом устройстве. */
+export class EmailPasswordModal extends Form {
+  private email = "";
+  private password = "";
+  private confirm = "";
+
+  constructor(
+    app: App,
+    private plugin: SelfsyncCloudPlugin,
+  ) {
+    super(app);
+  }
+
+  override onOpen(): void {
+    this.header(t("email.title"), t("email.desc"));
+    this.text(t("auth.email"), "", (v) => (this.email = v.trim()));
+    this.text(t("auth.password"), "", (v) => (this.password = v), true, t("auth.passwordDesc"));
+    this.text(t("auth.confirm"), "", (v) => (this.confirm = v), true);
+    this.footer(t("email.submit"));
+  }
+
+  protected async submit(): Promise<string | null> {
+    if (this.password !== this.confirm) return t("auth.mismatch");
+    if (weak(this.password)) return t("auth.weak");
+    await this.plugin.cloud.setEmailPassword(this.email, this.password);
+    new Notice(t("email.done"));
     return null;
   }
 }

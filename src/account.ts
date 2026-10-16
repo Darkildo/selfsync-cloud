@@ -147,17 +147,38 @@ export async function newRecovery(accountKey: Uint8Array<ArrayBuffer>): Promise<
   };
 }
 
+/** Энтропия фразы (32 байта); не BIP39 — `null`. */
+export function recoveryEntropy(phrase: string): Uint8Array<ArrayBuffer> | null {
+  const raw = phraseDecode(phrase);
+  return raw ? new Uint8Array(raw) : null;
+}
+
+/** Доказательство знания фразы (на сервере — его sha256): находит аккаунт без email. */
+export function recoveryAuth(entropy: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  return hkdf(entropy, "recovery-auth");
+}
+
+/** Ключ аккаунта из обёртки фразой; чужая фраза — `null`. */
+export async function openRecoveryWrapped(entropy: Uint8Array<ArrayBuffer>, wrapped: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer> | null> {
+  const k = await open(await hkdf(entropy, "recovery-wrap"), wrapped, "account-key");
+  return k?.length === 32 ? k : null;
+}
+
 /** По фразе: доказательство для сервера и ключ аккаунта из `recovery_wrapped`.
  *  Неверная фраза (не BIP39) — `null`; фраза не от этого аккаунта — ключ `null`. */
 export async function openRecovery(
   phrase: string,
   wrapped: Uint8Array<ArrayBuffer>,
 ): Promise<{ auth: Uint8Array<ArrayBuffer>; accountKey: Uint8Array<ArrayBuffer> | null } | null> {
-  const raw = phraseDecode(phrase);
-  if (!raw) return null;
-  const entropy = new Uint8Array(raw);
-  const k = await open(await hkdf(entropy, "recovery-wrap"), wrapped, "account-key");
-  return { auth: await hkdf(entropy, "recovery-auth"), accountKey: k?.length === 32 ? k : null };
+  const entropy = recoveryEntropy(phrase);
+  if (!entropy) return null;
+  return { auth: await recoveryAuth(entropy), accountKey: await openRecoveryWrapped(entropy, wrapped) };
+}
+
+/** Доказательство владения ключом аккаунта (на сервере — его sha256): подтверждает
+ *  необратимые действия у аккаунта без пароля. Ключ по нему не восстановить. */
+export function keyAuth(accountKey: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  return hkdf(accountKey, "key-auth");
 }
 
 /** Пароль vault'а для ядра: свой у каждого vault'а, выводится из ключа аккаунта. */

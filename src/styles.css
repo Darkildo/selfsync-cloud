@@ -14,3 +14,8 @@
   font-family: var(--font-monospace);
   user-select: text;
 }
+
+/* Напоминание о фразе в строке состояния. */
+.selfsync-cloud-phrase-bar {
+  color: var(--text-warning);
+}

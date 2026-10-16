@@ -40,12 +40,14 @@ interface LoadedPlugin {
   core(): { version: string; protocol: number };
 }
 
-async function load(data: unknown): Promise<LoadedPlugin> {
+async function load(data: unknown, storage: Record<string, string> = {}): Promise<LoadedPlugin> {
   const dir = await fsp.mkdtemp(join(tmpdir(), "selfsync-cloud-"));
   const req = Module.createRequire(import.meta.url);
   const Main = (req(join(ROOT, "main.js")) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
   // Регион без адреса: отрисовка настроек не ходит в сеть к настоящему сервису.
-  const plugin = new Main(obsidian.stubApp(dir, { region: "offline", ...(data as object) }), { id: "selfsync-cloud", version: "0.1.0" });
+  const app = obsidian.stubApp(dir, { region: "offline", ...(data as object) });
+  Object.assign(app.storage, storage);
+  const plugin = new Main(app, { id: "selfsync-cloud", version: "0.2.0" });
   await plugin.onload();
   return plugin;
 }
@@ -66,9 +68,9 @@ test("main.js: ядро из core/, шифрование обязательно,
     assert.ok(core.protocol >= 1);
     const cfg = plugin.engineConfig();
     assert.equal(cfg.requireEncryption, true);
-    assert.equal(cfg.client, "cloud/0.1.0");
+    assert.equal(cfg.client, "cloud/0.2.0");
     const ids = plugin.commands.map((c) => c.id);
-    assert.ok(ids.includes("account") && ids.includes("invite"), ids.join(", "));
+    assert.ok(ids.includes("account") && ids.includes("invite") && ids.includes("phrase"), ids.join(", "));
     // Ссылки подключения self-hosted сервера здесь нет.
     assert.ok(!ids.includes("connect"));
     // Без подключения синк не запущен.
@@ -82,7 +84,7 @@ test("main.js: ядро из core/, шифрование обязательно,
   }
 });
 
-test("main.js: настройки без аккаунта — вход, регистрация, код; затем синк и версия ядра", async () => {
+test("main.js: настройки без аккаунта — начать или войти; затем синк и версия ядра", async () => {
   const plugin = await load(null);
   try {
     const { headings, rows } = render(plugin);
@@ -92,7 +94,9 @@ test("main.js: настройки без аккаунта — вход, реги
     assert.ok(headings.includes("Синхронизация"), headings.join(", "));
     assert.ok(!headings.includes("Подключение"), headings.join(", "));
     const buttons = rows.flatMap((r) => r.buttons);
-    for (const b of ["Зарегистрироваться", "Войти", "У меня есть код приглашения"]) assert.ok(buttons.includes(b), buttons.join(", "));
+    for (const b of ["Начать синхронизацию", "Войти"]) assert.ok(buttons.includes(b), buttons.join(", "));
+    // Регистрации по email больше нет: аккаунт создаётся одним нажатием.
+    assert.ok(!buttons.includes("Зарегистрироваться"), buttons.join(", "));
     // Имя устройства — в конфликтных копиях и списке устройств аккаунта.
     assert.ok(rows.some((r) => r.name === "Имя устройства"), rows.map((r) => r.name).join(" | "));
   } finally {
@@ -108,7 +112,7 @@ test("main.js: устройство по приглашению без сесс�
     const intro = rows.find((r) => r.desc.includes("«Notes»"));
     assert.ok(intro, rows.map((r) => r.desc).join(" | "));
     assert.deepEqual(intro.buttons, ["Войти"]);
-    assert.ok(rows.some((r) => r.name === "«Notes»" && r.buttons.includes("Пригласить устройство")));
+    assert.ok(rows.some((r) => r.name === "«Notes»" && r.buttons.includes("Подключить устройство")));
   } finally {
     plugin.onunload();
   }
@@ -123,7 +127,26 @@ test("main.js: сессия есть, а аккаунт не загрузилс�
     assert.ok(row.desc.includes("не загрузился"), row.desc);
     assert.deepEqual(row.buttons, ["Повторить", "Выйти"]);
     const buttons = rows.flatMap((r) => r.buttons);
-    assert.ok(!buttons.includes("Зарегистрироваться"), buttons.join(", "));
+    assert.ok(!buttons.includes("Начать синхронизацию"), buttons.join(", "));
+  } finally {
+    plugin.onunload();
+  }
+});
+
+test("main.js: аккаунт без email — номер вместо адреса, фраза ещё здесь: показать", async () => {
+  // Слова фразы лежат в localStorage до отметки «записал».
+  const words = JSON.stringify({ version: 1, words: Array.from({ length: 24 }, () => "abandon") });
+  const plugin = await load({ session: "cs_x", accountId: 42 }, { "selfsync-cloud-phrase": words });
+  try {
+    const { rows } = render(plugin);
+    assert.ok(rows.some((r) => r.name === "Аккаунт #42"), rows.map((r) => r.name).join(" | "));
+    const phrase = rows.find((r) => r.name === "Фраза восстановления");
+    assert.ok(phrase, rows.map((r) => r.name).join(" | "));
+    assert.ok(phrase.desc.includes("не записана"), phrase.desc);
+    assert.deepEqual(phrase.buttons, ["Показать"]);
+    // Строка состояния напоминает.
+    const bar = (plugin as unknown as { statusBar: { text: string } }).statusBar;
+    assert.ok(bar.text.includes("фраза"), bar.text);
   } finally {
     plugin.onunload();
   }
