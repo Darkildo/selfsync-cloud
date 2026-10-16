@@ -5,7 +5,7 @@ export class WasmEngine {
     /**
      * Обрабатывает событие; возвращает массив действий для исполнителя.
      */
-    handle(now: number, event: any): any;
+    handle(now: number, event: unknown): unknown;
     /**
      * Есть ли неотправленные локальные изменения (перед выгрузкой плагина).
      */
@@ -14,7 +14,7 @@ export class WasmEngine {
      * `config` — объект настроек (`EngineConfig`, поля в camelCase, все необязательны);
      * `index` — сохранённый снимок индекса или `undefined`.
      */
-    constructor(config: any, index?: Uint8Array | null);
+    constructor(config: unknown, index?: Uint8Array | null);
     /**
      * Когда движок хочет следующий `tick` (мс) или `undefined`.
      */
@@ -22,7 +22,7 @@ export class WasmEngine {
     /**
      * Текущий статус (то же, что последний `Action::Status`).
      */
-    status(): any;
+    status(): unknown;
 }
 
 /**

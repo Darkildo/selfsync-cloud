@@ -14,8 +14,8 @@ export class WasmEngine {
     /**
      * Обрабатывает событие; возвращает массив действий для исполнителя.
      * @param {number} now
-     * @param {any} event
-     * @returns {any}
+     * @param {unknown} event
+     * @returns {unknown}
      */
     handle(now, event) {
         try {
@@ -43,7 +43,7 @@ export class WasmEngine {
     /**
      * `config` — объект настроек (`EngineConfig`, поля в camelCase, все необязательны);
      * `index` — сохранённый снимок индекса или `undefined`.
-     * @param {any} config
+     * @param {unknown} config
      * @param {Uint8Array | null} [index]
      */
     constructor(config, index) {
@@ -82,7 +82,7 @@ export class WasmEngine {
     }
     /**
      * Текущий статус (то же, что последний `Action::Status`).
-     * @returns {any}
+     * @returns {unknown}
      */
     status() {
         try {
