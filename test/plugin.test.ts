@@ -74,6 +74,9 @@ test("main.js: ядро из core/, шифрование обязательно,
     // Без подключения синк не запущен.
     assert.equal(plugin.runner, undefined);
     assert.equal(plugin.settings.region, "offline");
+    // styles.css — общие окна ядра и окна облака.
+    const css = readFileSync(join(ROOT, "styles.css"), "utf8");
+    assert.ok(css.includes(".selfsync-qr") && css.includes(".selfsync-cloud-phrase"));
   } finally {
     plugin.onunload();
   }

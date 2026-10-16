@@ -34,14 +34,14 @@ Works on desktop and mobile, Obsidian 1.8.7 or newer. Do not enable it together 
 
 ## Source and audit
 
-This repository adds only the cloud screens: sign-up and sign-in, plans and device invites. The sync engine is the open selfsync project at a released tag, kept in `core/`: its plugin sources, its MIT license and the engine compiled to WebAssembly. `core/SOURCE` names the tag and commit. CI rebuilds `core/` from that tag with `scripts/core.sh check` and fails unless the result is byte-identical, so `core/` cannot drift from the published selfsync.
+This repository adds only the cloud screens: sign-up and sign-in, plans and device invites. The sync engine is the open selfsync project at a released tag, kept in `core/`: its plugin sources and styles, its MIT license and the engine compiled to WebAssembly. `core/SOURCE` names the tag and commit. CI rebuilds `core/` from that tag with `scripts/core.sh check` and fails unless the result is byte-identical, so `core/` cannot drift from the published selfsync.
 
 Building the plugin needs only Node:
 
 ```sh
 git clone https://github.com/Darkildo/selfsync-cloud
 cd selfsync-cloud
-npm ci && npm run build      # main.js
+npm ci && npm run build      # main.js, styles.css
 npm test
 ```
 

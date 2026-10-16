@@ -1,13 +1,18 @@
 // Сборка плагина: src/main.ts → main.js (CommonJS, как ждёт Obsidian). Ядро и общий
 // код плагина берутся из core/ (открытый selfsync на выпущенном теге, см. scripts/core.sh),
-// WASM встраивается байтами прямо в main.js.
-import { readFileSync } from "node:fs";
+// WASM встраивается байтами прямо в main.js. styles.css — стили общих окон из core/
+// и окон облака.
+import { readFileSync, writeFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import esbuild from "esbuild";
 
 const production = process.argv[2] === "production";
 // Версия ядра — из манифеста подмодуля: в настройках видно, из какого тега собран плагин.
 const coreVersion = JSON.parse(readFileSync("core/manifest.json", "utf8")).version;
+
+function writeStyles() {
+  writeFileSync("styles.css", readFileSync("core/plugin/styles.css", "utf8") + "\n" + readFileSync("src/styles.css", "utf8"));
+}
 
 const ctx = await esbuild.context({
   entryPoints: ["src/main.ts"],
@@ -27,6 +32,7 @@ const ctx = await esbuild.context({
   // import.meta.url есть только в асинхронной загрузке обвязки wasm-bindgen, а мы
   // инициализируем WASM синхронно из встроенных байтов.
   logOverride: { "empty-import-meta": "silent" },
+  plugins: [{ name: "styles", setup: (b) => b.onEnd(writeStyles) }],
 });
 
 if (production) {

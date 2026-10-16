@@ -1,0 +1,16 @@
+/* Окна облака. Стили общих окон — core/plugin/styles.css; сборка склеивает оба в styles.css. */
+/* Тариф «скоро»: виден, но выбрать нельзя. */
+.selfsync-cloud-soon {
+  opacity: 0.5;
+}
+
+.selfsync-cloud-phrase {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(8, auto);
+  grid-auto-flow: column;
+  list-style-position: inside;
+  padding-left: 0;
+  font-family: var(--font-monospace);
+  user-select: text;
+}

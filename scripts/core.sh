@@ -27,7 +27,7 @@ need() {
   fi
 }
 
-# build ТЕГ КАТАЛОГ — ядро тега в каталог: plugin/src, plugin/pkg, заглушка Obsidian,
+# build ТЕГ КАТАЛОГ — ядро тега в каталог: plugin/src, plugin/pkg, стили, заглушка Obsidian,
 # manifest.json (версия ядра), LICENSE и SOURCE (тег и коммит).
 build() {
   local tag=$1 out=$2 tmp src
@@ -63,7 +63,7 @@ build() {
     exit 1
   fi
   mkdir -p "$out/plugin/test"
-  cp -r "$src/plugin/src" "$src/plugin/pkg" "$out/plugin/"
+  cp -r "$src/plugin/src" "$src/plugin/pkg" "$src/plugin/styles.css" "$out/plugin/"
   cp "$src/plugin/test/obsidian-stub.ts" "$out/plugin/test/"
   cp "$src/LICENSE" "$src/manifest.json" "$out/"
   printf 'selfsync %s %s\n' "$tag" "$(git -C "$src" rev-parse HEAD)" > "$out/SOURCE"

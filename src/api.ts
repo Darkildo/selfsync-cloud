@@ -99,10 +99,6 @@ export class CloudApi {
     private session = "",
   ) {}
 
-  withSession(session: string): CloudApi {
-    return new CloudApi(this.server, this.http, session);
-  }
-
   private async call<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
     const headers: Record<string, string> = { "content-type": "application/json" };
     const bearer = token ?? this.session;

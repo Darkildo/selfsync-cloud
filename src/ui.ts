@@ -64,6 +64,8 @@ abstract class Form extends Modal {
     if (this.busy) return;
     this.busy = true;
     this.error.setText(t("auth.working"));
+    // Argon2 занимает главный поток на секунды: сначала дать нарисовать «Вывожу ключи…».
+    await new Promise((r) => window.requestAnimationFrame(() => window.setTimeout(r, 0)));
     try {
       const err = await this.submit();
       if (err) this.error.setText(err);
@@ -88,17 +90,11 @@ export class StartModal extends Modal {
   constructor(
     app: App,
     private plugin: SelfsyncCloudPlugin,
-    private mode: "start" | "recover" = "start",
   ) {
     super(app);
   }
 
   override onOpen(): void {
-    if (this.mode === "recover") {
-      this.close();
-      new RecoverModal(this.app, this.plugin).open();
-      return;
-    }
     this.setTitle(t("start.title"));
     this.contentEl.createEl("p", { text: t("account.intro") });
     const go = (m: Modal) => {

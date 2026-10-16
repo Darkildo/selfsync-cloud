@@ -13,7 +13,7 @@ import { Cloud, INVITE_ACTION } from "./cloud.ts";
 import { setLanguage, t } from "./i18n.ts";
 import { defaultRegion } from "./regions.ts";
 import { CloudSettingTab } from "./settings.ts";
-import { CodeModal, InviteModal, StartModal, UnlockModal } from "./ui.ts";
+import { CodeModal, InviteModal, RecoverModal, StartModal, UnlockModal } from "./ui.ts";
 
 export interface CloudSettings extends Settings {
   /** Регион аккаунта: `cis` (СНГ) или `eu` (Europe). */
@@ -44,10 +44,21 @@ const CLOUD_DEFAULTS = {
   wrappedKey: "",
 };
 
+/** Ответа сервиса нет дольше — «не ответил»: окно не висит «в работе» вечно. */
+const TIMEOUT_MS = 30_000;
+
 /** HTTP через Obsidian: без CORS, на мобильных тоже. */
 const obsidianTransport: Transport = async (req) => {
-  const r = await requestUrl({ url: req.url, method: req.method, headers: req.headers, body: req.body, throw: false });
-  return { status: r.status, text: new TextDecoder().decode(r.arrayBuffer) };
+  let timer = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error("request timed out")), TIMEOUT_MS);
+  });
+  try {
+    const r = await Promise.race([requestUrl({ url: req.url, method: req.method, headers: req.headers, body: req.body, throw: false }), timeout]);
+    return { status: r.status, text: new TextDecoder().decode(r.arrayBuffer) };
+  } finally {
+    window.clearTimeout(timer);
+  }
 };
 
 export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
@@ -125,7 +136,7 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
 
   /** Забытый пароль — восстановление аккаунта, а не фраза vault'а. */
   override recover(): void {
-    new StartModal(this.app, this, "recover").open();
+    new RecoverModal(this.app, this).open();
   }
 
   /** Версия ядра, с которым собран плагин: тег подмодуля и протокол из WASM. */
