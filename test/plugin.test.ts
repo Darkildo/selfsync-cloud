@@ -90,6 +90,8 @@ test("main.js: настройки без аккаунта — вход, реги
     assert.ok(!headings.includes("Подключение"), headings.join(", "));
     const buttons = rows.flatMap((r) => r.buttons);
     for (const b of ["Зарегистрироваться", "Войти", "У меня есть код приглашения"]) assert.ok(buttons.includes(b), buttons.join(", "));
+    // Имя устройства — в конфликтных копиях и списке устройств аккаунта.
+    assert.ok(rows.some((r) => r.name === "Имя устройства"), rows.map((r) => r.name).join(" | "));
   } finally {
     plugin.onunload();
   }

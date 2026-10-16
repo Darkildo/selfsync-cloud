@@ -32,6 +32,9 @@ export interface Invite {
   expiresAt: number;
   /** Ссылка для QR: адрес сервиса, код и пароль vault'а (на сервер не уходит). */
   uri: string;
+  /** В ссылке есть пароль vault'а; без ключа аккаунта на устройстве — нет, и новое
+   *  устройство спросит пароль аккаунта. */
+  withKey: boolean;
 }
 
 export class Cloud {
@@ -164,6 +167,7 @@ export class Cloud {
     if (!this.s.session) return null;
     try {
       this.account = await this.api().account();
+      await this.learnDeviceId().catch(() => undefined);
     } catch (e) {
       // Сессию закрыли (смена пароля, блокировка, выход на другом устройстве).
       if (e instanceof CloudError && (e.status === 401 || e.status === 403)) {
@@ -175,6 +179,17 @@ export class Cloud {
       throw e;
     }
     return this.account;
+  }
+
+  /** Номер этого устройства — у ядра (подключённые до того, как он запоминался). */
+  private async learnDeviceId(): Promise<void> {
+    const runner = this.plugin.runner;
+    if (this.s.deviceId || !this.s.token || !runner) return;
+    const r = await runner.command({ type: "devices" });
+    const me = r.type === "devices" ? r.devices.find((d) => d.current) : undefined;
+    if (!me) return;
+    this.s.deviceId = me.id;
+    await this.plugin.saveSettings();
   }
 
   /** Выход: сессия закрывается, ключ аккаунта забывается. Синк vault'а этого
@@ -233,7 +248,7 @@ export class Cloud {
       await this.refreshAccount().catch(() => undefined);
       throw e;
     }
-    await this.connect(this.server(), d.token, d.vault, d.label);
+    await this.connect(this.server(), d.token, d.vault, d.label, d.device_id);
     this.plugin.runner?.send({ type: "enableEncryption", password: await vaultPassword(key, d.vault), remember: true, recovery: false });
   }
 
@@ -241,7 +256,7 @@ export class Cloud {
   async connectVault(name: string): Promise<void> {
     const key = this.needAccountKey();
     const d = await this.api().addDevice(name, this.s.deviceName);
-    await this.connect(this.server(), d.token, d.vault, d.label);
+    await this.connect(this.server(), d.token, d.vault, d.label, d.device_id);
     this.plugin.runner?.send({ type: "password", password: await vaultPassword(key, d.vault), remember: true });
   }
 
@@ -257,17 +272,18 @@ export class Cloud {
       await this.signedOut();
     }
     await this.keepWrap(r.kdf, r.salt, r.wrapped_key);
-    await this.connect(server, r.token, r.vault, r.label);
+    await this.connect(server, r.token, r.vault, r.label, r.device_id);
     if (vaultPw) this.plugin.runner?.send({ type: "password", password: vaultPw, remember: true });
   }
 
-  private async connect(server: string, token: string, vault: string, label: string): Promise<void> {
+  private async connect(server: string, token: string, vault: string, label: string, deviceId: number): Promise<void> {
     // Индекс и ключ прежнего vault'а этому не подходят.
     await this.plugin.forgetVault(server.replace(/\/+$/, ""), vault);
     this.s.server = server.replace(/\/+$/, "");
     this.s.token = token;
     this.s.vault = vault;
     this.s.vaultLabel = label;
+    this.s.deviceId = deviceId;
     await this.plugin.saveSettings({ restart: true });
     this.changed();
   }
@@ -288,12 +304,14 @@ export class Cloud {
     return true;
   }
 
-  /** Приглашение другого устройства в vault этого устройства. */
+  /** Приглашение другого устройства в vault этого устройства. Токеном устройства —
+   *  сессия не нужна; пароль vault'а в ссылку — только если есть ключ аккаунта. */
   async invite(name: string): Promise<Invite> {
-    const key = this.needAccountKey();
+    const key = this.accountKey();
     const r = await this.api(this.s.server).invite(this.s.vault, name, this.s.token);
-    const q = new URLSearchParams({ s: this.s.server, c: r.code, k: await vaultPassword(key, this.s.vault) });
-    return { code: r.code, expiresAt: r.expires_at, uri: `obsidian://${INVITE_ACTION}?${q.toString()}` };
+    const q = new URLSearchParams({ s: this.s.server, c: r.code });
+    if (key) q.set("k", await vaultPassword(key, this.s.vault));
+    return { code: r.code, expiresAt: r.expires_at, uri: `obsidian://${INVITE_ACTION}?${q.toString()}`, withKey: key !== null };
   }
 
   /** Отключить это устройство: токен отзывается, ключи забываются, синк стоит.
@@ -313,6 +331,7 @@ export class Cloud {
     this.s.token = "";
     this.s.vault = "";
     this.s.vaultLabel = "";
+    this.s.deviceId = 0;
     await this.plugin.saveSettings({ restart: true });
     this.changed();
   }

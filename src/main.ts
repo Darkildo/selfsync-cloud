@@ -24,6 +24,8 @@ export interface CloudSettings extends Settings {
   /** Сессия аккаунта (`cs_…`): экраны аккаунта. Синк идёт по токену устройства. */
   session: string;
   vaultLabel: string;
+  /** Номер этого устройства в аккаунте (0 — неизвестен): отметка в списке устройств. */
+  deviceId: number;
   /** Соль, параметры KDF и обёртка ключа аккаунта паролем: открыть ключ без сессии. */
   kdf: string;
   salt: string;
@@ -36,6 +38,7 @@ const CLOUD_DEFAULTS = {
   email: "",
   session: "",
   vaultLabel: "",
+  deviceId: 0,
   kdf: "",
   salt: "",
   wrappedKey: "",

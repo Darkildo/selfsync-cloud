@@ -162,6 +162,8 @@ test("облако: регистрация, vault, QR, код, вход, лим�
   const words = await a.plugin.cloud.register("cis", email, PASSWORD);
   assert.equal(words.length, 24);
   await a.plugin.cloud.createVault("Notes");
+  const laptop = (await a.plugin.cloud.refreshAccount())?.devices.find((x) => x.name === "laptop");
+  assert.equal(Number(a.plugin.settings.deviceId), laptop?.id, "номер устройства запомнен");
   await until(a.plugin, "шифрование и отправка на A", () => {
     const s = a.plugin.runner?.status();
     return s?.encrypted === true && s.pending === 0 && s.state === "idle";

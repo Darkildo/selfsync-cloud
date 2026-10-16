@@ -239,3 +239,16 @@ test("ошибки сервиса и устройства — на языке и
     setLanguage("ru");
   }
 });
+
+test("приглашение без ключа аккаунта: код без пароля vault'а в ссылке", async () => {
+  const route = { "POST /vaults/c-1/invites": () => ({ status: 201, json: { code: "ABCDEFGH", expires_at: 1 } }) };
+  const f = fake({ server: regionUrl("cis"), token: "t-1", vault: "c-1" }, route);
+  const bare = await f.cloud.invite("");
+  assert.equal(bare.withKey, false);
+  assert.equal(new URL(bare.uri.replace("obsidian://", "https://x/")).searchParams.has("k"), false);
+  const key = randomBytes(32);
+  f.storage.set(ACCOUNT_KEY, toB64(key));
+  const full = await f.cloud.invite("");
+  assert.equal(full.withKey, true);
+  assert.equal(new URL(full.uri.replace("obsidian://", "https://x/")).searchParams.get("k"), await vaultPassword(key, "c-1"));
+});

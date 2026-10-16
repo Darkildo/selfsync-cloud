@@ -11,6 +11,7 @@ const en = {
   "settings.vault": "Vault",
   "settings.devices": "Devices",
   "settings.tariffs": "Plans",
+  "settings.deviceDesc": "Shown in conflict copies. The account device list gets it when the device connects to a vault.",
 
   "account.intro": "Sync this vault through Selfsync Cloud. Notes are encrypted on your devices: the service cannot read them.",
   "account.register": "Sign up",
@@ -91,6 +92,7 @@ const en = {
 
   "invite.title": "Invite a device",
   "invite.desc": "Scan the code with the phone camera, or enter the text code in Selfsync Cloud on the new device (it will ask for the account password). Valid until {until}, once.",
+  "invite.descNoKey": "Scan the code with the phone camera, or enter the text code in Selfsync Cloud on the new device. Either way it will ask for the account password: this device is not signed in. Valid until {until}, once.",
   "invite.code": "Code: {code}",
   "invite.copy": "Copy the code",
 
@@ -109,6 +111,7 @@ const en = {
   "unlock.wrong": "Wrong password",
 
   "devices.lastSeen": "{vault} · last seen {time}",
+  "devices.current": "{name} (this device)",
   "devices.revoke": "Revoke",
   "devices.revokeConfirm": "Revoke “{name}”? It stops syncing and has to be invited again.",
   "devices.none": "No devices yet.",
@@ -135,6 +138,7 @@ const ru: Record<Key, string> = {
   "settings.vault": "Vault",
   "settings.devices": "Устройства",
   "settings.tariffs": "Тарифы",
+  "settings.deviceDesc": "Видно в конфликтных копиях. В список устройств аккаунта попадает при подключении к vault'у.",
 
   "account.intro": "Синхронизация этого vault'а через Selfsync Cloud. Заметки шифруются на ваших устройствах: сервис не может их прочитать.",
   "account.register": "Зарегистрироваться",
@@ -215,6 +219,7 @@ const ru: Record<Key, string> = {
 
   "invite.title": "Пригласить устройство",
   "invite.desc": "Наведите камеру телефона на код или введите текстовый код в Selfsync Cloud на новом устройстве (оно спросит пароль аккаунта). Действует до {until}, один раз.",
+  "invite.descNoKey": "Наведите камеру телефона на код или введите текстовый код в Selfsync Cloud на новом устройстве. В обоих случаях оно спросит пароль аккаунта: на этом устройстве вход не выполнен. Действует до {until}, один раз.",
   "invite.code": "Код: {code}",
   "invite.copy": "Скопировать код",
 
@@ -233,6 +238,7 @@ const ru: Record<Key, string> = {
   "unlock.wrong": "Неверный пароль",
 
   "devices.lastSeen": "{vault} · на связи {time}",
+  "devices.current": "{name} (это устройство)",
   "devices.revoke": "Отозвать",
   "devices.revokeConfirm": "Отозвать «{name}»? Устройство перестанет синхронизироваться, подключить его можно будет только новым приглашением.",
   "devices.none": "Устройств пока нет.",

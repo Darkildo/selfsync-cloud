@@ -367,7 +367,8 @@ export class InviteModal extends Modal {
     const { contentEl } = this;
     try {
       const inv = await this.plugin.cloud.invite("");
-      contentEl.createEl("p", { text: t("invite.desc", { until: new Date(inv.expiresAt).toLocaleTimeString() }) });
+      const until = new Date(inv.expiresAt).toLocaleTimeString();
+      contentEl.createEl("p", { text: t(inv.withKey ? "invite.desc" : "invite.descNoKey", { until }) });
       contentEl.appendChild(qrSvg(document, qrModules(inv.uri)));
       const code = formatCode(inv.code);
       new Setting(contentEl)

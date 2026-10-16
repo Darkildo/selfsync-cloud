@@ -6,6 +6,7 @@ import { type App, Notice, type Setting } from "obsidian";
 import { formatBytes, t as coreT } from "../core/plugin/src/i18n.ts";
 import { type Row, type Section, SelfsyncSettingTab } from "../core/plugin/src/settings.ts";
 import { confirm } from "../core/plugin/src/ui/confirm.ts";
+import { DiagnoseModal } from "../core/plugin/src/ui/diagnose.ts";
 import type { TariffView } from "./api.ts";
 import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
@@ -149,6 +150,19 @@ export class CloudSettingTab extends SelfsyncSettingTab {
       });
     }
     rows.push({
+      name: coreT("settings.device"),
+      desc: t("settings.deviceDesc"),
+      build: (s: Setting) => {
+        s.setName(coreT("settings.device")).setDesc(t("settings.deviceDesc"));
+        s.addText((x) =>
+          x.setValue(this.s.deviceName).onChange(async (v) => {
+            this.s.deviceName = v.trim() || this.s.deviceName;
+            await this.cloudPlugin.saveSettings({ reconfigure: true });
+          }),
+        );
+      },
+    });
+    rows.push({
       name: t("account.service"),
       desc: t("account.serviceDesc"),
       build: (s: Setting) => {
@@ -177,6 +191,12 @@ export class CloudSettingTab extends SelfsyncSettingTab {
           build: (s: Setting) => {
             s.setName(name).setDesc(t("vault.connectedDesc"));
             s.addButton((b) => b.setButtonText(t("vault.invite")).onClick(() => new InviteModal(this.app, this.cloudPlugin).open()));
+            s.addButton((b) =>
+              b
+                .setButtonText(coreT("diag.button"))
+                .setDisabled(!this.cloudPlugin.runner)
+                .onClick(() => new DiagnoseModal(this.app, () => this.cloudPlugin.diagnose()).open()),
+            );
             s.addButton((b) =>
               b.setButtonText(t("vault.disconnect")).onClick(async () => {
                 if (!(await confirm(this.app, t("vault.disconnectConfirm"), t("vault.disconnect")))) return;
@@ -212,11 +232,15 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     const label = (vault: string) => a.vaults.find((v) => v.name === vault)?.label ?? vault;
     return a.devices.map((d) => {
       const desc = t("devices.lastSeen", { vault: label(d.vault), time: d.last_seen ? new Date(d.last_seen).toLocaleString() : "—" });
+      // Это устройство отключают в разделе vault'а: там ещё забываются ключи.
+      const current = this.s.deviceId !== 0 && d.id === this.s.deviceId;
+      const name = current ? t("devices.current", { name: d.name }) : d.name;
       return {
-        name: d.name,
+        name,
         desc,
         build: (s: Setting) => {
-          s.setName(d.name).setDesc(desc);
+          s.setName(name).setDesc(desc);
+          if (current) return;
           s.addButton((b) =>
             b.setButtonText(t("devices.revoke")).onClick(async () => {
               if (!(await confirm(this.app, t("devices.revokeConfirm", { name: d.name }), t("devices.revoke")))) return;
