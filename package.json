@@ -1,6 +1,6 @@
 {
   "name": "selfsync-cloud",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Плагин Obsidian для облачной синхронизации Selfsync Cloud",
   "private": true,
   "license": "PolyForm-Shield-1.0.0",
