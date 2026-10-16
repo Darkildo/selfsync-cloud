@@ -31,6 +31,9 @@ const en = {
   "account.serviceDesc": "Leave empty to use the region address. Only for testing a server.",
   "account.notOpen": "The service is not open in this region yet.",
   "account.unlimited": "unlimited",
+  "account.loading": "Loading the account…",
+  "account.unavailable": "The account did not load: {error}",
+  "account.retry": "Retry",
 
   "region.name": "Region",
   "region.cis": "CIS",
@@ -52,6 +55,8 @@ const en = {
   "auth.blocked": "The account is blocked",
   "auth.rateLimited": "Too many attempts, try again later",
   "auth.offline": "The service did not respond: check the connection",
+  "auth.badEmail": "This email address is not accepted",
+  "auth.needSignIn": "Sign in to the account on this device first",
 
   "phrase.title": "Recovery phrase",
   "phrase.desc": "These 24 words restore the account if you forget the password. They are shown once: write them down and keep them apart from the password. Without the phrase and the password, nobody (the service included) can restore your notes.",
@@ -71,6 +76,7 @@ const en = {
   "vault.invite": "Invite a device",
   "vault.disconnect": "Disconnect this device",
   "vault.disconnectConfirm": "Disconnect this device from the vault? Files here stay, sync stops.",
+  "vault.disconnectOffline": "The device could not be revoked on the service ({error}). Disconnect it only here? It stays in the account device list until you revoke it there.",
   "vault.pickTitle": "Choose a vault",
   "vault.pickDesc": "Connect this Obsidian vault to an existing vault of the account or create a new one.",
   "vault.connect": "Connect here",
@@ -80,6 +86,8 @@ const en = {
   "vault.label": "Name",
   "vault.limit": "Your plan allows {n} vault(s)",
   "vault.none": "The account has no vaults yet.",
+  "vault.limitReached": "The plan allows no more vaults",
+  "devices.limit": "The plan allows no more devices: revoke one in the settings",
 
   "invite.title": "Invite a device",
   "invite.desc": "Scan the code with the phone camera, or enter the text code in Selfsync Cloud on the new device (it will ask for the account password). Valid until {until}, once.",
@@ -102,6 +110,7 @@ const en = {
 
   "devices.lastSeen": "{vault} · last seen {time}",
   "devices.revoke": "Revoke",
+  "devices.revokeConfirm": "Revoke “{name}”? It stops syncing and has to be invited again.",
   "devices.none": "No devices yet.",
 
   "tariff.current": "Your plan",
@@ -146,6 +155,9 @@ const ru: Record<Key, string> = {
   "account.serviceDesc": "Пусто — адрес региона. Нужно только для проверки сервера.",
   "account.notOpen": "В этом регионе сервис ещё не открыт.",
   "account.unlimited": "без ограничения",
+  "account.loading": "Загружаю аккаунт…",
+  "account.unavailable": "Аккаунт не загрузился: {error}",
+  "account.retry": "Повторить",
 
   "region.name": "Регион",
   "region.cis": "СНГ",
@@ -167,6 +179,8 @@ const ru: Record<Key, string> = {
   "auth.blocked": "Аккаунт заблокирован",
   "auth.rateLimited": "Слишком много попыток, попробуйте позже",
   "auth.offline": "Сервис не ответил: проверьте соединение",
+  "auth.badEmail": "Этот адрес почты не принимается",
+  "auth.needSignIn": "Сначала войдите в аккаунт на этом устройстве",
 
   "phrase.title": "Фраза восстановления",
   "phrase.desc": "Эти 24 слова вернут доступ к аккаунту, если вы забудете пароль. Они показываются один раз: запишите их и храните отдельно от пароля. Без фразы и пароля восстановить заметки не сможет никто, включая сервис.",
@@ -186,6 +200,7 @@ const ru: Record<Key, string> = {
   "vault.invite": "Пригласить устройство",
   "vault.disconnect": "Отключить это устройство",
   "vault.disconnectConfirm": "Отключить это устройство от vault'а? Файлы здесь останутся, синхронизация остановится.",
+  "vault.disconnectOffline": "Не удалось отозвать устройство в сервисе ({error}). Отключить только здесь? Устройство останется в списке аккаунта, пока вы не отзовёте его там.",
   "vault.pickTitle": "Выбор vault'а",
   "vault.pickDesc": "Подключите этот vault Obsidian к существующему vault'у аккаунта или создайте новый.",
   "vault.connect": "Подключить сюда",
@@ -195,6 +210,8 @@ const ru: Record<Key, string> = {
   "vault.label": "Название",
   "vault.limit": "Тариф позволяет vault'ов: {n}",
   "vault.none": "В аккаунте пока нет vault'ов.",
+  "vault.limitReached": "Тариф не позволяет больше vault'ов",
+  "devices.limit": "Тариф не позволяет больше устройств: отзовите одно в настройках",
 
   "invite.title": "Пригласить устройство",
   "invite.desc": "Наведите камеру телефона на код или введите текстовый код в Selfsync Cloud на новом устройстве (оно спросит пароль аккаунта). Действует до {until}, один раз.",
@@ -217,6 +234,7 @@ const ru: Record<Key, string> = {
 
   "devices.lastSeen": "{vault} · на связи {time}",
   "devices.revoke": "Отозвать",
+  "devices.revokeConfirm": "Отозвать «{name}»? Устройство перестанет синхронизироваться, подключить его можно будет только новым приглашением.",
   "devices.none": "Устройств пока нет.",
 
   "tariff.current": "Ваш тариф",
@@ -256,6 +274,14 @@ export function errorText(e: unknown): string {
     code_invalid: "code.invalid",
     bad_kdf: "error.badKdf",
     bad_recovery: "recover.wrong",
+    // Без отдельного «нет такого аккаунта»: не подсказывать, какие адреса заняты.
+    account_not_found: "auth.badCredentials",
+    bad_email: "auth.badEmail",
+    email_domain_blocked: "auth.badEmail",
+    device_limit: "devices.limit",
+    vault_limit: "vault.limitReached",
+    no_account: "auth.needSignIn",
+    no_account_key: "auth.needSignIn",
   };
   const k = code ? known[code] : undefined;
   if (k) return t(k);

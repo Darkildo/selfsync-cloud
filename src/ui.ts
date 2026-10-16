@@ -16,6 +16,11 @@ import { tariffLimits } from "./settings.ts";
 /** Порог стойкости пароля, бит (как у пароля шифрования в selfsync). */
 const WEAK_BITS = 50;
 
+/** Пароль аккаунта слишком простой: он же защищает ключ шифрования. */
+function weak(password: string): boolean {
+  return password.length < 10 || passwordStrength(password) < WEAK_BITS;
+}
+
 /** Код приглашения группами по четыре: проще продиктовать и ввести. */
 export function formatCode(code: string): string {
   return code.match(/.{1,4}/g)?.join("-") ?? code;
@@ -156,11 +161,14 @@ export class AuthModal extends Form {
   }
 
   private tariffs: HTMLElement | undefined;
+  /** Номер последнего запроса тарифов: ответ по прежнему региону не рисуется. */
+  private tariffsSeq = 0;
 
   /** Тарифы региона: недоступные — затемнены с пометкой «скоро». */
   private async showTariffs(): Promise<void> {
     const el = this.tariffs;
     if (!el) return;
+    const seq = ++this.tariffsSeq;
     el.empty();
     if (!this.plugin.cloud.server(this.regionId)) {
       el.createEl("p", { text: t("account.notOpen"), cls: "mod-warning" });
@@ -168,12 +176,16 @@ export class AuthModal extends Form {
     }
     try {
       const info = await this.plugin.cloud.loadInfo(this.regionId);
+      if (seq !== this.tariffsSeq) return;
+      el.empty();
       if (!info.registration_open) el.createEl("p", { text: t("auth.closed"), cls: "mod-warning" });
       for (const x of info.tariffs) {
         const s = new Setting(el).setName([x.title, x.price, x.status === "soon" ? `· ${t("tariff.soon")}` : ""].filter(Boolean).join(" ")).setDesc(tariffLimits(x));
         if (x.status === "soon") s.settingEl.addClass("selfsync-cloud-soon");
       }
     } catch (e) {
+      if (seq !== this.tariffsSeq) return;
+      el.empty();
       el.createEl("p", { text: errorText(e), cls: "mod-warning" });
     }
   }
@@ -181,15 +193,19 @@ export class AuthModal extends Form {
   protected async submit(): Promise<string | null> {
     const cloud = this.plugin.cloud;
     if (!cloud.server(this.regionId)) return t("account.notOpen");
+    // Устройство уже синхронизирует vault — выбирать нечего.
+    const pick = () => {
+      if (!this.plugin.settings.vault) new VaultModal(this.app, this.plugin).open();
+    };
     if (this.mode === "login") {
       await cloud.login(this.regionId, this.email, this.password);
-      new VaultModal(this.app, this.plugin).open();
+      pick();
       return null;
     }
     if (this.password !== this.confirm) return t("auth.mismatch");
-    if (this.password.length < 10 || passwordStrength(this.password) < WEAK_BITS) return t("auth.weak");
+    if (weak(this.password)) return t("auth.weak");
     const words = await cloud.register(this.regionId, this.email, this.password);
-    new PhraseModal(this.app, words, () => new VaultModal(this.app, this.plugin).open()).open();
+    new PhraseModal(this.app, words, pick).open();
     return null;
   }
 }
@@ -197,6 +213,7 @@ export class AuthModal extends Form {
 /** Фраза восстановления: показывается один раз, закрыть — только записав. */
 export class PhraseModal extends Modal {
   private written = false;
+  private done = false;
 
   constructor(
     app: App,
@@ -220,6 +237,7 @@ export class PhraseModal extends Modal {
         .setCta()
         .onClick(() => {
           if (!this.written) return;
+          this.done = true;
           this.close();
           this.then();
         }),
@@ -229,6 +247,10 @@ export class PhraseModal extends Modal {
   override onClose(): void {
     // Слова не держим в DOM дольше нужного.
     this.contentEl.empty();
+    if (this.done) return;
+    // Esc и клик мимо окна тоже закрывают его, а фраза больше нигде не покажется.
+    if (this.written) this.then();
+    else new PhraseModal(this.app, this.words, this.then).open();
   }
 }
 
@@ -264,7 +286,8 @@ export class RecoverModal extends Form {
   protected async submit(): Promise<string | null> {
     const bad = phraseError(this.phrase);
     if (bad) return bad;
-    if (this.password.length < 10 || passwordStrength(this.password) < WEAK_BITS) return t("auth.weak");
+    if (weak(this.password)) return t("auth.weak");
+    if (!this.plugin.cloud.server(this.regionId)) return t("account.notOpen");
     await this.plugin.cloud.recover(this.regionId, this.email, this.phrase, this.password);
     new Notice(t("recover.done"));
     if (this.plugin.settings.vault) await this.plugin.cloud.unlock();
@@ -284,18 +307,24 @@ export class VaultModal extends Modal {
 
   override onOpen(): void {
     this.setTitle(t("vault.pickTitle"));
+    this.render("");
+  }
+
+  /** Список vault'ов аккаунта; после ошибки — заново: vault мог уже создаться. */
+  private render(error: string): void {
     const { contentEl } = this;
+    contentEl.empty();
     contentEl.createEl("p", { text: t("vault.pickDesc") });
     const cloud = this.plugin.cloud;
     const a = cloud.account;
     if (!a) return;
-    const status = contentEl.createEl("p", { cls: "mod-warning" });
+    contentEl.createEl("p", { text: error, cls: "mod-warning" });
     const act = async (f: () => Promise<void>) => {
       try {
         await f();
         this.close();
       } catch (e) {
-        status.setText(errorText(e));
+        this.render(errorText(e));
       }
     };
     if (a.vaults.length === 0) contentEl.createEl("p", { text: t("vault.none") });
@@ -471,7 +500,7 @@ export class ChangePasswordModal extends Form {
 
   protected async submit(): Promise<string | null> {
     if (this.next !== this.confirm) return t("auth.mismatch");
-    if (this.next.length < 10 || passwordStrength(this.next) < WEAK_BITS) return t("auth.weak");
+    if (weak(this.next)) return t("auth.weak");
     if (!(await this.plugin.cloud.changePassword(this.old, this.next))) return t("unlock.wrong");
     new Notice(t("account.passwordChanged"));
     return null;

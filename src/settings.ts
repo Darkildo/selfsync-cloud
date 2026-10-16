@@ -1,7 +1,7 @@
 // Вкладка настроек: аккаунт, vault этого устройства, устройства аккаунта, тарифы
 // и версия ядра; затем разделы синхронизации открытого плагина как есть.
 
-import type { App, Setting } from "obsidian";
+import { type App, Notice, type Setting } from "obsidian";
 
 import { formatBytes, t as coreT } from "../core/plugin/src/i18n.ts";
 import { type Row, type Section, SelfsyncSettingTab } from "../core/plugin/src/settings.ts";
@@ -30,6 +30,8 @@ export function tariffLimits(x: TariffView): string {
 export class CloudSettingTab extends SelfsyncSettingTab {
   private loadedAt = 0;
   private loading = false;
+  /** Аккаунт не загрузился: текст ошибки (нет связи, регион не открыт). */
+  private loadError = "";
 
   constructor(
     app: App,
@@ -42,19 +44,23 @@ export class CloudSettingTab extends SelfsyncSettingTab {
   private load(): void {
     if (this.loading || Date.now() - this.loadedAt < STALE_MS) return;
     const cloud = this.cloudPlugin.cloud;
-    if (!cloud.server()) return;
+    if (!cloud.server()) {
+      this.loadError = t("account.notOpen");
+      return;
+    }
     this.loading = true;
-    void Promise.allSettled([cloud.refreshAccount(), cloud.loadInfo()]).then(() => {
+    void Promise.allSettled([cloud.refreshAccount(), cloud.loadInfo()]).then(([account]) => {
       this.loading = false;
       this.loadedAt = Date.now();
+      this.loadError = account.status === "rejected" ? errorText(account.reason) : "";
       this.refresh();
     });
   }
 
-  /** Перечитать аккаунт сейчас (после действий). */
+  /** Перечитать аккаунт (после действий): сейчас, если вкладка открыта, иначе при открытии. */
   reload(): void {
     this.loadedAt = 0;
-    this.load();
+    if (this.containerEl.isConnected) this.load();
     this.refresh();
   }
 
@@ -97,12 +103,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
             }),
           );
           s.addButton((b) => b.setButtonText(t("account.changePassword")).onClick(() => new ChangePasswordModal(this.app, this.cloudPlugin).open()));
-          s.addButton((b) =>
-            b.setButtonText(t("account.logout")).onClick(async () => {
-              await cloud.logout();
-              this.refresh();
-            }),
-          );
+          s.addButton((b) => b.setButtonText(t("account.logout")).onClick(() => void cloud.logout()));
         },
       });
       rows.push({
@@ -114,11 +115,23 @@ export class CloudSettingTab extends SelfsyncSettingTab {
             b.setButtonText(t("account.delete")).onClick(() => {
               new PasswordPromptModal(this.app, t("account.delete"), t("account.deleteConfirm"), async (pw) => {
                 await cloud.deleteAccount(pw);
-                this.refresh();
+                new Notice(t("account.deleted"));
                 return null;
               }).open();
             }),
           );
+        },
+      });
+    } else if (this.s.session) {
+      // Сессия есть, а аккаунт не загрузился: не предлагать регистрацию заново.
+      const desc = this.loadError ? t("account.unavailable", { error: this.loadError }) : t("account.loading");
+      rows.push({
+        name: this.s.email,
+        desc,
+        build: (s: Setting) => {
+          s.setName(this.s.email).setDesc(desc);
+          if (this.loadError) s.addButton((b) => b.setButtonText(t("account.retry")).onClick(() => this.reload()));
+          s.addButton((b) => b.setButtonText(t("account.logout")).onClick(() => void cloud.logout()));
         },
       });
     } else {
@@ -167,8 +180,13 @@ export class CloudSettingTab extends SelfsyncSettingTab {
             s.addButton((b) =>
               b.setButtonText(t("vault.disconnect")).onClick(async () => {
                 if (!(await confirm(this.app, t("vault.disconnectConfirm"), t("vault.disconnect")))) return;
-                await cloud.forgetDevice();
-                this.reload();
+                try {
+                  await cloud.forgetDevice();
+                } catch (e) {
+                  // Без связи токен не отозвать: отключить только здесь — по согласию.
+                  if (!(await confirm(this.app, t("vault.disconnectOffline", { error: errorText(e) }), t("vault.disconnect")))) return;
+                  await cloud.forgetDevice({ revoke: false });
+                }
               }),
             );
           },
@@ -201,13 +219,12 @@ export class CloudSettingTab extends SelfsyncSettingTab {
           s.setName(d.name).setDesc(desc);
           s.addButton((b) =>
             b.setButtonText(t("devices.revoke")).onClick(async () => {
+              if (!(await confirm(this.app, t("devices.revokeConfirm", { name: d.name }), t("devices.revoke")))) return;
               try {
                 await this.cloudPlugin.cloud.revokeDevice(d.id);
               } catch (e) {
                 s.setDesc(errorText(e));
-                return;
               }
-              this.refresh();
             }),
           );
         },
@@ -217,7 +234,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
 
   private tariffRows(): Row[] {
     const cloud = this.cloudPlugin.cloud;
-    const list = cloud.info?.tariffs ?? (cloud.account ? [cloud.account.tariff] : []);
+    const list = cloud.info()?.tariffs ?? (cloud.account ? [cloud.account.tariff] : []);
     const current = cloud.account?.tariff.id;
     return list.map((x) => {
       const status = x.id === current ? t("tariff.current") : x.status === "soon" ? t("tariff.soon") : "";

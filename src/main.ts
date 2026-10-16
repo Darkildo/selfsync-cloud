@@ -50,6 +50,8 @@ const obsidianTransport: Transport = async (req) => {
 export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
   declare settings: CloudSettings;
   cloud: Cloud = new Cloud(this, obsidianTransport);
+  /** Ключ аккаунта с устройства уже отдан ядру в этом запуске синка. */
+  private triedAccountKey = false;
 
   override async onload(): Promise<void> {
     setLanguage(moment.locale());
@@ -64,6 +66,17 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
 
   protected override createSettingTab(): CloudSettingTab {
     return new CloudSettingTab(this.app, this);
+  }
+
+  /** Аккаунт или vault изменились (вход, подключение, выход): открытые настройки
+   *  перерисовываются, данные аккаунта перечитываются. */
+  accountChanged(): void {
+    (this.settingTab as CloudSettingTab | undefined)?.reload();
+  }
+
+  override async start(): Promise<void> {
+    this.triedAccountKey = false;
+    await super.start();
   }
 
   protected override registerConnect(): void {
@@ -94,9 +107,14 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
     return { ...super.engineConfig(), client: `cloud/${this.manifest.version}`, requireEncryption: true };
   }
 
-  /** Ключ vault'а выводится из ключа аккаунта: пароль спрашивается, только если
-   *  ключа аккаунта на устройстве нет. */
+  /** Ключ vault'а выводится из ключа аккаунта: пароль спрашивается, если ключа
+   *  аккаунта на устройстве нет или он уже не подошёл (ядро снова просит пароль). */
   override askPassword(): void {
+    if (this.triedAccountKey) {
+      new UnlockModal(this.app, this).open();
+      return;
+    }
+    this.triedAccountKey = true;
     void this.cloud.unlock().then((ok) => {
       if (!ok) new UnlockModal(this.app, this).open();
     });

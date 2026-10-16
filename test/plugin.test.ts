@@ -108,3 +108,18 @@ test("main.js: устройство по приглашению без сесс�
     plugin.onunload();
   }
 });
+
+test("main.js: сессия есть, а аккаунт не загрузился — не предлагать регистрацию", async () => {
+  const plugin = await load({ session: "cs_x", email: "a@example.com" });
+  try {
+    const { rows } = render(plugin);
+    const row = rows.find((r) => r.name === "a@example.com");
+    assert.ok(row, rows.map((r) => r.name).join(" | "));
+    assert.ok(row.desc.includes("не загрузился"), row.desc);
+    assert.deepEqual(row.buttons, ["Повторить", "Выйти"]);
+    const buttons = rows.flatMap((r) => r.buttons);
+    assert.ok(!buttons.includes("Зарегистрироваться"), buttons.join(", "));
+  } finally {
+    plugin.onunload();
+  }
+});

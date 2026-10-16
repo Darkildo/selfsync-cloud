@@ -37,7 +37,8 @@ export interface Invite {
 export class Cloud {
   /** Последний ответ `/account` (для настроек). */
   account: AccountView | null = null;
-  info: Info | null = null;
+  /** Ответы `/info` по адресу сервиса: у каждого региона свои тарифы и KDF. */
+  private infos = new Map<string, Info>();
 
   constructor(
     private plugin: SelfsyncCloudPlugin,
@@ -65,6 +66,11 @@ export class Cloud {
     return new CloudApi(server, this.http, this.s.session);
   }
 
+  /** Аккаунт или vault этого устройства изменились: перерисовать настройки. */
+  private changed(): void {
+    this.plugin.accountChanged();
+  }
+
   // ---------- ключ аккаунта ----------
 
   accountKey(): Uint8Array<ArrayBuffer> | null {
@@ -87,15 +93,22 @@ export class Cloud {
 
   // ---------- аккаунт ----------
 
+  /** Тарифы и KDF региона: последний ответ, если он был. */
+  info(region = this.s.region): Info | null {
+    return this.infos.get(this.server(region)) ?? null;
+  }
+
   async loadInfo(region = this.s.region): Promise<Info> {
-    this.info = await this.api(this.server(region)).info();
-    return this.info;
+    const server = this.server(region);
+    const info = await this.api(server).info();
+    this.infos.set(server, info);
+    return info;
   }
 
   /** Регистрация: возвращает фразу восстановления — её нужно показать один раз. */
   async register(region: string, email: string, password: string): Promise<string[]> {
     const server = this.server(region);
-    const info = this.info ?? (await this.api(server).info());
+    const info = this.info(region) ?? (await this.loadInfo(region));
     const accountKey = randomBytes(32);
     const cred = await credentials(password, accountKey, parseKdf(info.kdf));
     const recovery = await newRecovery(accountKey);
@@ -110,7 +123,7 @@ export class Cloud {
     const keys = await passwordKeys(password, fromB64(pre.salt), parseKdf(pre.kdf));
     const r = await api.login(email, keys.authKey, this.s.deviceName);
     const accountKey = await unwrapAccountKey(keys.wrapKey, fromB64(r.account.wrapped_key));
-    if (!accountKey) throw new CloudError(0, "bad_key", "ключ аккаунта не открылся этим паролем");
+    if (!accountKey) throw new CloudError(0, "bad_key", "the password does not open the account key");
     await this.signedIn(region, r.session, r.account, accountKey);
     return r.account;
   }
@@ -120,8 +133,8 @@ export class Cloud {
     const api = new CloudApi(this.server(region), this.http);
     const start = await api.recoverStart(email);
     const opened = await openRecovery(phrase, fromB64(start.recovery_wrapped));
-    if (!opened?.accountKey) throw new CloudError(0, "bad_recovery", "фраза не подходит к этому аккаунту");
-    const info = this.info ?? (await api.info());
+    if (!opened?.accountKey) throw new CloudError(0, "bad_recovery", "the phrase does not fit this account");
+    const info = this.info(region) ?? (await this.loadInfo(region));
     const cred = await credentials(newPassword, opened.accountKey, parseKdf(info.kdf));
     const r = await api.recover(email, opened.auth, cred, this.s.deviceName);
     await this.signedIn(region, r.session, r.account, opened.accountKey);
@@ -135,6 +148,16 @@ export class Cloud {
     this.account = account;
     this.rememberAccountKey(accountKey);
     await this.keepWrap(account.kdf, account.salt, account.wrapped_key);
+    this.changed();
+  }
+
+  /** Сессия, email и ключ аккаунта — забыть (выход, другой аккаунт). */
+  private async signedOut(): Promise<void> {
+    this.s.session = "";
+    this.account = null;
+    this.rememberAccountKey(null);
+    await this.plugin.saveSettings();
+    this.changed();
   }
 
   async refreshAccount(): Promise<AccountView | null> {
@@ -158,22 +181,18 @@ export class Cloud {
    *  устройства идёт дальше на ключе vault'а, который запомнило ядро. */
   async logout(): Promise<void> {
     if (this.s.session) await this.api().logout().catch(() => undefined);
-    this.s.session = "";
-    this.account = null;
-    this.rememberAccountKey(null);
-    await this.plugin.saveSettings();
+    await this.signedOut();
   }
 
   /** Удалить аккаунт со всеми данными на сервере. Пароль подтверждает удаление. */
   async deleteAccount(password: string): Promise<void> {
     const keys = await this.keysFor(password);
     await this.api().deleteAccount(keys.authKey);
-    await this.forgetDevice();
-    this.s.session = "";
+    // Устройства удалены вместе с аккаунтом: отзывать нечего.
+    await this.forgetDevice({ revoke: false });
     this.s.email = "";
-    this.account = null;
-    this.rememberAccountKey(null);
     await this.keepWrap("", "", "");
+    await this.signedOut();
   }
 
   /** Смена пароля: тот же ключ аккаунта под новым паролем. Другие сессии
@@ -190,7 +209,7 @@ export class Cloud {
   }
 
   private async keysFor(password: string) {
-    if (!this.s.salt || !this.s.kdf) throw new CloudError(0, "no_account", "нет данных аккаунта на устройстве");
+    if (!this.s.salt || !this.s.kdf) throw new CloudError(0, "no_account", "no account data on this device");
     return passwordKeys(password, fromB64(this.s.salt), parseKdf(this.s.kdf));
   }
 
@@ -200,8 +219,20 @@ export class Cloud {
    *  включается до первой отправки (requireEncryption). */
   async createVault(label: string): Promise<void> {
     const key = this.needAccountKey();
+    // Лимит устройств — до создания: иначе vault остался бы в аккаунте без устройств.
+    const a = (await this.refreshAccount()) ?? this.account;
+    if (a && a.tariff.devices > 0 && a.usage.devices >= a.tariff.devices) {
+      throw new CloudError(409, "device_limit", "device limit reached");
+    }
     const v = await this.api().createVault(label);
-    const d = await this.api().addDevice(v.name, this.s.deviceName);
+    let d;
+    try {
+      d = await this.api().addDevice(v.name, this.s.deviceName);
+    } catch (e) {
+      // Vault уже создан: в списке он должен появиться, чтобы подключиться к нему, а не создавать ещё один.
+      await this.refreshAccount().catch(() => undefined);
+      throw e;
+    }
     await this.connect(this.server(), d.token, d.vault, d.label);
     this.plugin.runner?.send({ type: "enableEncryption", password: await vaultPassword(key, d.vault), remember: true, recovery: false });
   }
@@ -219,6 +250,12 @@ export class Cloud {
   async redeem(server: string, code: string, vaultPw?: string): Promise<void> {
     if (!this.trusted(server)) throw new CloudError(0, "untrusted_server", server);
     const r = await new CloudApi(server.trim().replace(/\/+$/, ""), this.http).redeem(code, this.s.deviceName);
+    // Vault другого аккаунта: сессия и ключ прежнего к нему не подходят (ключ vault'а
+    // вывелся бы не тот, смена пароля пошла бы с чужой солью).
+    if (this.s.wrappedKey && (r.salt !== this.s.salt || r.wrapped_key !== this.s.wrappedKey)) {
+      this.s.email = "";
+      await this.signedOut();
+    }
     await this.keepWrap(r.kdf, r.salt, r.wrapped_key);
     await this.connect(server, r.token, r.vault, r.label);
     if (vaultPw) this.plugin.runner?.send({ type: "password", password: vaultPw, remember: true });
@@ -232,19 +269,21 @@ export class Cloud {
     this.s.vault = vault;
     this.s.vaultLabel = label;
     await this.plugin.saveSettings({ restart: true });
+    this.changed();
   }
 
-  /** Ключ vault'а нужен ядру: из ключа аккаунта, а если его нет — из пароля.
-   *  Неверный пароль — `false`. */
+  /** Ключ vault'а нужен ядру: из пароля аккаунта, а без пароля — из ключа аккаунта
+   *  на устройстве. Неверный пароль или нет ни того, ни другого — `false`. */
   async unlock(password?: string): Promise<boolean> {
-    let key = this.accountKey();
-    if (!key && password !== undefined) {
+    if (!this.s.vault) return false;
+    let key = password === undefined ? this.accountKey() : null;
+    if (password !== undefined) {
       const keys = await this.keysFor(password);
       key = await unwrapAccountKey(keys.wrapKey, fromB64(this.s.wrappedKey));
       if (!key) return false;
       this.rememberAccountKey(key);
     }
-    if (!key || !this.s.vault) return false;
+    if (!key) return false;
     this.plugin.runner?.send({ type: "password", password: await vaultPassword(key, this.s.vault), remember: true });
     return true;
   }
@@ -257,29 +296,36 @@ export class Cloud {
     return { code: r.code, expiresAt: r.expires_at, uri: `obsidian://${INVITE_ACTION}?${q.toString()}` };
   }
 
-  /** Отключить это устройство: токен отзывается, ключи забываются, синк стоит. */
-  async forgetDevice(): Promise<void> {
+  /** Отключить это устройство: токен отзывается, ключи забываются, синк стоит.
+   *  Не удалось отозвать (нет связи) — ошибка, а без `revoke` — только здесь. */
+  async forgetDevice(o: { revoke?: boolean } = {}): Promise<void> {
     const runner = this.plugin.runner;
-    if (runner) {
+    if (runner && o.revoke !== false) {
       const r = await runner.command({ type: "devices" });
+      if (r.type === "error") throw new CloudError(0, r.code, r.message);
       const me = r.type === "devices" ? r.devices.find((d) => d.current) : undefined;
-      if (me) await runner.command({ type: "revokeDevice", id: me.id });
+      if (me) {
+        const x = await runner.command({ type: "revokeDevice", id: me.id });
+        if (x.type === "error") throw new CloudError(0, x.code, x.message);
+      }
     }
     this.plugin.app.saveLocalStorage(VAULT_KEY, null);
     this.s.token = "";
     this.s.vault = "";
     this.s.vaultLabel = "";
     await this.plugin.saveSettings({ restart: true });
+    this.changed();
   }
 
   async revokeDevice(id: number): Promise<void> {
     await this.api().revokeDevice(id);
     await this.refreshAccount();
+    this.changed();
   }
 
   private needAccountKey(): Uint8Array<ArrayBuffer> {
     const k = this.accountKey();
-    if (!k) throw new CloudError(0, "no_account_key", "войдите в аккаунт на этом устройстве");
+    if (!k) throw new CloudError(0, "no_account_key", "sign in on this device");
     return k;
   }
 }
