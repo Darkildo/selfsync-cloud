@@ -1,7 +1,7 @@
 {
   "id": "selfsync-cloud",
   "name": "Selfsync Cloud",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minAppVersion": "1.13.0",
   "description": "Hosted sync for your vault with end-to-end encryption and no lost edits: automatic merges, conflict copies, deleted file recovery and file history. Requires a Selfsync Cloud account.",
   "author": "Darkildo",
