@@ -1,12 +1,12 @@
 {
   "name": "selfsync-cloud",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Плагин Obsidian для облачной синхронизации Selfsync Cloud",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
-    "wasm": "core/scripts/build-wasm.sh",
+    "core:check": "scripts/core.sh check",
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",

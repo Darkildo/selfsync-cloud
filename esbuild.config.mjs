@@ -1,5 +1,5 @@
 // Сборка плагина: src/main.ts → main.js (CommonJS, как ждёт Obsidian). Ядро и общий
-// код плагина берутся из подмодуля core/ (открытый selfsync на зафиксированном теге),
+// код плагина берутся из core/ (открытый selfsync на выпущенном теге, см. scripts/core.sh),
 // WASM встраивается байтами прямо в main.js.
 import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";

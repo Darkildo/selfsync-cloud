@@ -37,7 +37,12 @@
 }
 
 .selfsync-cloud-phrase {
-  columns: 3;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(8, auto);
+  grid-auto-flow: column;
+  list-style-position: inside;
+  padding-left: 0;
   font-family: var(--font-monospace);
   user-select: text;
 }

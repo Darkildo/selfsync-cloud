@@ -1,0 +1,24 @@
+name: Инструменты сборки ядра
+description: wasm-bindgen-cli (версия из Cargo.lock тега в core/SOURCE) и wasm-opt (версия из scripts/core.sh), с кэшем.
+runs:
+  using: composite
+  steps:
+    - name: Версии
+      id: v
+      shell: bash
+      run: |
+        read -r _ tag _ < core/SOURCE
+        lock=$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/Darkildo/selfsync/$tag/Cargo.lock")
+        echo "bindgen=$(grep -A1 '^name = "wasm-bindgen"$' <<< "$lock" | sed -n 's/^version = "\(.*\)"/\1/p')" >> "$GITHUB_OUTPUT"
+        echo "opt=$(sed -n 's/^WASM_OPT_CRATE=//p' scripts/core.sh)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/bin/wasm-bindgen
+          ~/.cargo/bin/wasm-opt
+        key: core-tools-${{ runner.os }}-bindgen-${{ steps.v.outputs.bindgen }}-opt-${{ steps.v.outputs.opt }}
+    - name: Установка
+      shell: bash
+      run: |
+        [ -x ~/.cargo/bin/wasm-bindgen ] || cargo install wasm-bindgen-cli --version "${{ steps.v.outputs.bindgen }}" --locked
+        [ -x ~/.cargo/bin/wasm-opt ] || cargo install wasm-opt --version "${{ steps.v.outputs.opt }}" --locked

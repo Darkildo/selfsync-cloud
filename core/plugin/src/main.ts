@@ -1,0 +1,458 @@
+// Плагин Obsidian: тонкий слой между vault'ом и ядром. Ядро решает, что и когда
+// синхронизировать; здесь — события vault'а, исполнитель, статус-бар и окна.
+
+import { FileSystemAdapter, type Menu, moment, Notice, Platform, Plugin, requestUrl, type TAbstractFile, TFile, TFolder } from "obsidian";
+
+import wasmBytes from "selfsync-wasm-bytes";
+import { initWasm, Runner } from "./engine.ts";
+import { Executor } from "./executor.ts";
+import { noticeText, setLanguage, stateText, t } from "./i18n.ts";
+import { AdapterBackend } from "./io/adapter.ts";
+import type { FileBackend } from "./io/backend.ts";
+import { ObsidianHttp } from "./io/http.ts";
+import { NodeBackend } from "./io/node.ts";
+import { buildRules, DEFAULT_CONFIG_SYNC, inConfigDir, migrateUserExcludes } from "./configsync.ts";
+import { DEFAULT_SETTINGS, normalizeServer, SelfsyncSettingTab, type Settings } from "./settings.ts";
+import type { DiagCheck, EngineConfig, LogLevel, NameRules, Notice as EngineNotice, SyncStatus } from "./types.ts";
+import { ConflictsModal } from "./ui/conflicts.ts";
+import { ConnectModal } from "./ui/connect.ts";
+import { DeletedModal } from "./ui/deleted.ts";
+import { DiagnoseModal, hasProblems } from "./ui/diagnose.ts";
+import { HistoryModal } from "./ui/history.ts";
+import { PasswordModal } from "./ui/password.ts";
+import { confirm } from "./ui/confirm.ts";
+import { PhraseModal, RecoverModal } from "./ui/recovery.ts";
+
+const KEY_STORAGE = "selfsync-master-key";
+const LOG_LINES = 500;
+
+export default class SelfsyncPlugin extends Plugin {
+  override settings: Settings = { ...DEFAULT_SETTINGS };
+  runner: Runner | undefined;
+  protected settingTab: SelfsyncSettingTab | undefined;
+  private statusEl!: HTMLElement;
+  private status: SyncStatus | null = null;
+  private log: string[] = [];
+  private migrationNotice: Notice | undefined;
+
+  override async onload(): Promise<void> {
+    setLanguage(moment.locale());
+    await this.loadSettings();
+    initWasm(wasmBytes);
+
+    this.statusEl = this.addStatusBarItem();
+    this.statusEl.addClass("selfsync-status", "mod-clickable");
+    this.registerDomEvent(this.statusEl, "click", () => this.onStatusClick());
+    this.renderStatus();
+
+    this.addCommand({ id: "sync-now", name: t("cmd.syncNow"), callback: () => this.syncNow() });
+    this.registerConnect();
+    this.addCommand({ id: "password", name: t("cmd.password"), callback: () => this.askPassword() });
+    this.addCommand({ id: "conflicts", name: t("cmd.conflicts"), callback: () => this.whenRunning(() => new ConflictsModal(this.app, this).open()) });
+    this.addCommand({ id: "deleted", name: t("cmd.deleted"), callback: () => this.whenRunning(() => new DeletedModal(this.app, this).open()) });
+    this.addCommand({
+      id: "history",
+      name: t("cmd.history"),
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || !this.runner) return false;
+        if (!checking) new HistoryModal(this.app, this, file.path).open();
+        return true;
+      },
+    });
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!this.runner) return;
+        if (file instanceof TFile) {
+          menu.addItem((i) => i.setTitle(t("cmd.history")).setIcon("history").onClick(() => new HistoryModal(this.app, this, file.path).open()));
+        }
+        this.deviceMenu(menu, file);
+      }),
+    );
+    this.addCommand({ id: "log", name: t("cmd.log"), callback: () => this.showLog() });
+    this.settingTab = this.createSettingTab();
+    this.addSettingTab(this.settingTab);
+
+    this.app.workspace.onLayoutReady(() => {
+      // События vault'а — только после загрузки: до неё create приходит на каждый файл.
+      const changed = (f: TAbstractFile) => this.runner?.send({ type: "changed", path: f.path });
+      this.registerEvent(this.app.vault.on("create", changed));
+      this.registerEvent(this.app.vault.on("modify", changed));
+      this.registerEvent(this.app.vault.on("delete", (f) => this.runner?.send({ type: "deleted", path: f.path })));
+      this.registerEvent(this.app.vault.on("rename", (f, old) => this.runner?.send({ type: "renamed", from: old, to: f.path })));
+      this.registerDomEvent(document, "visibilitychange", () => {
+        this.runner?.send({ type: document.visibilityState === "hidden" ? "hidden" : "visible" });
+      });
+      void this.start();
+    });
+  }
+
+  /** Вкладка настроек (надстройка над плагином подставляет свою). */
+  protected createSettingTab(): SelfsyncSettingTab {
+    return new SelfsyncSettingTab(this.app, this);
+  }
+
+  /** Как устройство подключается: команда и ссылка со страницы /join/{code} сервера. */
+  protected registerConnect(): void {
+    this.addCommand({ id: "connect", name: t("cmd.connect"), callback: () => this.openConnect() });
+    this.registerObsidianProtocolHandler("selfsync-connect", (p) => {
+      new ConnectModal(this.app, this, p.server ?? "", p.code ?? "").open();
+    });
+  }
+
+  /** Устройство не подключено, а пользователь хочет синхронизировать. */
+  protected openConnect(): void {
+    new ConnectModal(this.app, this, this.settings.server, "").open();
+  }
+
+  override onunload(): void {
+    this.runner?.stop();
+    this.runner = undefined;
+  }
+
+  async loadSettings(): Promise<void> {
+    const saved = (await this.loadData()) as Partial<Settings> | null;
+    this.settings = { ...DEFAULT_SETTINGS, ...saved };
+    this.settings.configSync = { ...DEFAULT_CONFIG_SYNC, ...saved?.configSync };
+    // До пресетов каталог настроек стоял в пользовательских исключениях.
+    if (saved && !saved.configSync) {
+      this.settings.excludes = migrateUserExcludes(this.app.vault.configDir, this.settings.excludes);
+    }
+    if (!this.settings.deviceName) this.settings.deviceName = defaultDeviceName();
+  }
+
+  /** Сохранить настройки; при смене сервера/токена — перезапуск, иначе новая конфигурация ядру. */
+  /** Пункты «не синхронизировать здесь» / «освободить место» для файла или папки. */
+  private deviceMenu(menu: Menu, file: TAbstractFile): void {
+    if (file instanceof TFolder && file.isRoot()) return;
+    // Правило исключения этого устройства: папка — с «/» на конце.
+    const line = file instanceof TFolder ? `${file.path}/` : file.path;
+    const excluded = this.settings.excludes.some((l) => l.trim() === line);
+    const setExcluded = async (on: boolean): Promise<void> => {
+      const rest = this.settings.excludes.filter((l) => l.trim() !== line);
+      this.settings.excludes = on ? [...rest, line] : rest;
+      await this.saveSettings({ reconfigure: true });
+    };
+    if (!excluded) {
+      menu.addItem((i) => i.setTitle(t("menu.excludeHere")).setIcon("cloud-off").onClick(() => setExcluded(true)));
+      return;
+    }
+    menu.addItem((i) => i.setTitle(t("menu.includeHere")).setIcon("cloud").onClick(() => setExcluded(false)));
+    menu.addItem((i) => i.setTitle(t("menu.removeLocal")).setIcon("trash-2").onClick(() => this.removeLocal(file.path)));
+  }
+
+  /** Удалить локальные копии исключённого пути, которые есть на сервере. */
+  private async removeLocal(path: string): Promise<void> {
+    const runner = this.runner;
+    if (!runner) return;
+    if (!(await confirm(this.app, t("menu.removeLocalConfirm", { path }), t("menu.removeLocal")))) return;
+    const r = await runner.command({ type: "removeLocal", path });
+    if (r.type === "removed") new Notice(t("menu.removeLocalDone", { removed: r.removed, kept: r.kept }));
+    else if (r.type === "error" && r.code === "not_excluded") new Notice(t("menu.removeLocalWait"));
+    else new Notice(r.type === "error" ? r.message : r.type);
+  }
+
+  async saveSettings(o: { restart?: boolean; reconfigure?: boolean } = {}): Promise<void> {
+    await this.saveData(this.settings);
+    if (o.restart) await this.start();
+    else if (o.reconfigure) this.runner?.send({ type: "configure", config: this.engineConfig() });
+  }
+
+  private get pluginDir(): string {
+    return this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+  }
+
+  engineConfig(): EngineConfig {
+    return {
+      deviceName: this.settings.deviceName,
+      client: `plugin/${this.manifest.version}`,
+      // Каталог настроек Obsidian (не обязательно `.obsidian`) — по пресетам.
+      excludes: buildRules(this.app.vault.configDir, this.settings.configSync, this.settings.excludes),
+      // Каталог плагина (индекс, кэш, токен) и локальная корзина Obsidian — никогда.
+      hardExcludes: [`${this.pluginDir}/`, ".trash/"],
+      // Файлы настроек — JSON: построчное слияние дало бы невалидный файл.
+      noMerge: [`${this.app.vault.configDir}/**`],
+      caseInsensitive: !Platform.isLinux,
+      nameRules: nameRules(),
+      debounceMs: Math.round(this.settings.debounceSec * 1000),
+      pollActiveMs: Math.round(this.settings.pollActiveSec * 1000),
+      pollIdleMaxMs: Math.round(this.settings.pollIdleMaxMin * 60_000),
+      useWait: this.settings.useWait,
+      maxDownloadSize: Math.round(this.settings.maxDownloadMb * 1024 * 1024),
+      tzOffsetMin: -new Date().getTimezoneOffset(),
+    };
+  }
+
+  private backend(): FileBackend {
+    const adapter = this.app.vault.adapter;
+    if (Platform.isDesktop && adapter instanceof FileSystemAdapter) {
+      // eslint-disable-next-line no-undef, @typescript-eslint/no-require-imports -- Node fs есть только в десктопном Obsidian (там у плагина CommonJS require): подгружается здесь, а не при загрузке main.js
+      const fsp = require("fs/promises") as typeof import("node:fs/promises");
+      return new NodeBackend(adapter.getBasePath(), adapter.getFullPath(this.pluginDir), fsp, {
+        caseSensitive: Platform.isLinux,
+        trash: (p) => this.trash(p),
+      });
+    }
+    return new AdapterBackend(adapter, this.pluginDir, this.trashMode());
+  }
+
+  /** Как удаляет сам Obsidian: системная корзина или `.trash`; безвозвратно — никогда. */
+  private trashMode(): "system" | "local" {
+    const vault = this.app.vault as unknown as { getConfig?: (k: string) => unknown };
+    return vault.getConfig?.("trashOption") === "system" ? "system" : "local";
+  }
+
+  private async trash(path: string): Promise<void> {
+    const a = this.app.vault.adapter;
+    if (this.trashMode() === "system" && (await a.trashSystem(path))) return;
+    await a.trashLocal(path);
+  }
+
+  private executor(server: string, token?: string): Executor {
+    return new Executor(this.backend(), new ObsidianHttp(requestUrl), { server, token });
+  }
+
+  /** (Пере)запуск синка с текущими настройками. */
+  async start(): Promise<void> {
+    this.runner?.stop();
+    this.runner = undefined;
+    this.status = null;
+    if (!this.settings.server || !this.settings.token) {
+      this.renderStatus();
+      return;
+    }
+    const exec = this.executor(this.settings.server, this.settings.token);
+    const index = await exec.loadIndex();
+    this.runner = new Runner(this.engineConfig(), index, exec, {
+      status: (s) => {
+        const wasEncrypted = this.status?.encrypted;
+        const wasReadOnly = this.status?.readOnly ?? false;
+        const wasLock = encryptionLock(this.status);
+        this.status = s;
+        this.renderStatus();
+        // Шифрование включили (здесь или на другом устройстве) — иначе в открытых
+        // настройках так и висела бы кнопка «Включить».
+        if (wasEncrypted !== undefined && wasEncrypted !== s.encrypted) this.settingTab?.refresh();
+        if (wasReadOnly !== s.readOnly) this.settingTab?.refresh();
+        // Нужен пароль / пароль введён: строка шифрования меняет кнопку.
+        if (wasLock !== encryptionLock(s)) this.settingTab?.refresh();
+      },
+      notice: (n) => this.showNotice(n),
+      log: (level, m) => this.addLog(level, m),
+      rememberKey: (k) => this.app.saveLocalStorage(KEY_STORAGE, toBase64(k)),
+      forgetKey: () => this.app.saveLocalStorage(KEY_STORAGE, null),
+    });
+    const saved = this.app.loadLocalStorage(KEY_STORAGE) as string | null;
+    this.runner.send({ type: "start", key: saved ? fromBase64(saved) : null });
+  }
+
+  private whenRunning(f: () => void): void {
+    if (this.runner) f();
+    else this.openConnect();
+  }
+
+  syncNow(): void {
+    if (this.runner) this.runner.send({ type: "syncNow" });
+    else this.openConnect();
+  }
+
+  /** Обменять одноразовый код на токен. Ошибка: текст и `offline` — сервер не
+   *  ответил (тогда стоит проверить соединение). `null` — подключено. */
+  async redeem(server: string, code: string, device: string): Promise<{ message: string; offline: boolean } | null> {
+    if (!server || !code) return { message: "server/code", offline: false };
+    // Временный движок без токена: команда redeem — только HTTP, синк не запускается.
+    const tmp = new Runner({ deviceName: device }, null, this.executor(server), { log: (l, m) => this.addLog(l, m) });
+    try {
+      const r = await tmp.command({ type: "redeem", code, name: device });
+      if (r.type === "error" && r.code === "rate_limited") return { message: t("connect.rateLimited", { n: r.retryAfter ?? 0 }), offline: false };
+      if (r.type === "error") return { message: r.message, offline: r.code === "offline" || r.code === "error" };
+      if (r.type !== "token") return { message: r.type, offline: false };
+      await this.forgetVault(server, r.vault);
+      this.settings.server = server;
+      this.settings.token = r.token;
+      this.settings.vault = r.vault;
+      this.settings.deviceName = r.deviceName || device;
+      await this.saveSettings({ restart: true });
+      return null;
+    } finally {
+      tmp.stop();
+    }
+  }
+
+  /**
+   * Устройство переходит на другой vault или сервер: индекс и запомненный ключ
+   * прежнего к нему не относятся. С чужим индексом журнал читался бы с чужого
+   * `seq`, и часть файлов нового vault'а так и не пришла бы.
+   */
+  async forgetVault(server: string, vault: string): Promise<void> {
+    if (normalizeServer(server) === normalizeServer(this.settings.server) && vault === this.settings.vault) return;
+    this.runner?.stop();
+    this.runner = undefined;
+    await this.executor(server).deleteIndex();
+    this.app.saveLocalStorage(KEY_STORAGE, null);
+  }
+
+  /** Проверка соединения подключённого устройства; `null` — не подключено. */
+  async diagnose(): Promise<DiagCheck[] | null> {
+    const r = await this.runner?.command({ type: "diagnose" });
+    return r?.type === "diagnosis" ? r.checks : null;
+  }
+
+  /** Проверка адреса до подключения: только шаги до токена. */
+  async diagnoseServer(server: string): Promise<DiagCheck[]> {
+    const tmp = new Runner({ deviceName: this.settings.deviceName }, null, this.executor(server), { log: (l, m) => this.addLog(l, m) });
+    try {
+      const r = await tmp.command({ type: "diagnose" });
+      return r.type === "diagnosis" ? r.checks.filter((c) => c.step !== "token") : [];
+    } finally {
+      tmp.stop();
+    }
+  }
+
+  /** После подключения: проверить и показать окно, только если есть что сказать. */
+  async checkAfterConnect(): Promise<void> {
+    const checks = await this.diagnose();
+    if (checks && hasProblems(checks)) new DiagnoseModal(this.app, () => this.diagnose(), checks).open();
+  }
+
+  private onStatusClick(): void {
+    const s = this.status;
+    if (s?.state === "needPassword") this.askPassword();
+    else if (s?.state === "blocked" && s.reason === "unauthorized") this.openConnect();
+    else this.syncNow();
+  }
+
+  askPassword(): void {
+    new PasswordModal(
+      this.app,
+      {
+        title: t("password.title"),
+        desc: t("password.unlockDesc"),
+        submit: t("password.submit"),
+        showStrength: false,
+        onForgot: () => this.recover(),
+      },
+      (r) => this.runner?.send({ type: "password", password: r.password, remember: r.remember }),
+    ).open();
+  }
+
+  /** Забыли пароль: вход фразой восстановления с новым паролем. */
+  recover(): void {
+    new RecoverModal(this.app, async (r) => {
+      const res = await this.runner?.command({ type: "recover", phrase: r.phrase, newPassword: r.newPassword, remember: r.remember });
+      if (!res) return t("status.notConfigured");
+      if (res.type === "error") return res.code === "wrong_phrase" ? t("recovery.wrongPhrase") : res.message;
+      new Notice(t("recovery.restored"));
+      this.runner?.send({ type: "syncNow" });
+      return null;
+    }).open();
+  }
+
+  private renderStatus(): void {
+    const s = this.status;
+    const icon = !s
+      ? "○"
+      : s.readOnly && s.state === "idle"
+        ? "👁"
+        : { idle: "✓", syncing: "↻", offline: "⚠", error: "✗", needPassword: "🔒", blocked: "⛔" }[s.state];
+    const parts = [`${icon} ${stateText(s)}`];
+    if (s?.state === "syncing" && s.total > 0) parts.push(`${s.done}/${s.total}`);
+    else if (s && s.pending > 0) parts.push(t(s.readOnly ? "status.readOnlyPending" : "status.pending", { n: s.pending }));
+    if (s && s.conflicts > 0) parts.push(t("status.conflicts", { n: s.conflicts }));
+    if (s?.quota && s.quota.held > 0) parts.push(t("status.quotaFull", { n: s.quota.held }));
+    this.statusEl.setText(parts.join(" · "));
+    let tip = t("status.tooltip", { state: stateText(s) });
+    if (s && s.lastSync > 0) tip += `\n${t("status.lastSync", { time: new Date(s.lastSync).toLocaleTimeString() })}`;
+    this.statusEl.setAttribute("aria-label", tip);
+  }
+
+  private configNoticeShown = false;
+
+  /** Пришли файлы настроек: Obsidian перечитывает не все сам — подсказать перезапуск. */
+  private configArrived(pulled: string[]): void {
+    if (this.configNoticeShown) return;
+    if (!pulled.some((p) => inConfigDir(this.app.vault.configDir, p) && !p.startsWith(`${this.pluginDir}/`))) return;
+    this.configNoticeShown = true;
+    new Notice(t("configSync.restart"), 0);
+  }
+
+  private showNotice(n: EngineNotice): void {
+    if (n.kind === "recoveryPhrase") {
+      // Фраза — только в окно: ни в журнал, ни в настройки.
+      this.addLog("info", "notice recoveryPhrase");
+      new PhraseModal(this.app, n.words).open();
+      return;
+    }
+    if (n.kind === "synced") {
+      // Список путей может быть длинным: в журнал — сводка и начало списка.
+      const paths = [...n.pulled, ...n.pushed];
+      const more = paths.length > 5 ? ` …+${paths.length - 5}` : "";
+      this.addLog("info", `synced: pulled ${n.pulled.length}, pushed ${n.pushed.length}: ${paths.slice(0, 5).join(", ")}${more}`);
+      this.configArrived(n.pulled);
+      return;
+    }
+    this.addLog("info", `notice ${JSON.stringify(n)}`);
+    const text = noticeText(n);
+    if (!text) return;
+    if (n.kind === "migrationProgress") {
+      // Одно обновляемое уведомление вместо потока.
+      if (!this.migrationNotice) this.migrationNotice = new Notice(text, 0);
+      else this.migrationNotice.setMessage(text);
+      if (n.done >= n.total) this.migrationNotice = undefined;
+      return;
+    }
+    if (n.kind === "encryptionEnabled") {
+      this.migrationNotice?.hide();
+      this.migrationNotice = undefined;
+    }
+    const shown = new Notice(text, n.kind === "conflict" || n.kind === "wrongPassword" ? 0 : 8000);
+    if (n.kind === "conflict") shown.messageEl.onClickEvent(() => new ConflictsModal(this.app, this).open());
+    // На телефоне нет строки состояния: пароль вводят отсюда или из настроек.
+    if (n.kind === "needPassword") shown.messageEl.onClickEvent(() => this.askPassword());
+  }
+
+  private addLog(level: LogLevel, message: string): void {
+    if (level === "debug") return;
+    this.log.push(`${new Date().toISOString()} ${level} ${message}`);
+    if (this.log.length > LOG_LINES) this.log.splice(0, this.log.length - LOG_LINES);
+    if (level === "error" || level === "warn") console.warn(`selfsync: ${message}`);
+  }
+
+  private showLog(): void {
+    const text = this.log.slice(-50).join("\n") || "—";
+    void navigator.clipboard?.writeText(this.log.join("\n"));
+    new Notice(text, 15000);
+  }
+}
+
+/** Чем занято шифрование на этом устройстве (для перерисовки настроек). */
+function encryptionLock(s: SyncStatus | null): string {
+  if (s?.state === "needPassword") return "password";
+  return s?.reason === "encryption_started" ? "starting" : "";
+}
+
+/** Каких имён не создать на этой платформе (`?` и т.п. — на Windows и в хранилище Android). */
+function nameRules(): NameRules {
+  if (Platform.isWin) return "windows";
+  if (Platform.isAndroidApp) return "fat";
+  return "any";
+}
+
+function defaultDeviceName(): string {
+  if (Platform.isIosApp) return "iPhone";
+  if (Platform.isAndroidApp) return "Android";
+  if (Platform.isMacOS) return "Mac";
+  if (Platform.isWin) return "Windows";
+  return "Linux";
+}
+
+function toBase64(b: Uint8Array): string {
+  let s = "";
+  for (const x of b) s += String.fromCharCode(x);
+  return btoa(s);
+}
+
+function fromBase64(s: string): Uint8Array {
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+}
+

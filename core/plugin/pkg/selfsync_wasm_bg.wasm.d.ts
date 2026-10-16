@@ -1,0 +1,25 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_wasmengine_free: (a: number, b: number) => void;
+export const argon2id: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+export const checkPhrase: (a: number, b: number, c: number) => void;
+export const clientOlderThan: (a: number, b: number, c: number, d: number) => number;
+export const normalizePath: (a: number, b: number, c: number) => void;
+export const passwordStrength: (a: number, b: number) => number;
+export const phraseDecode: (a: number, b: number, c: number) => void;
+export const phraseEncode: (a: number, b: number, c: number) => void;
+export const protocolVersion: () => number;
+export const qrModules: (a: number, b: number, c: number) => void;
+export const quotaMinor: () => number;
+export const readOnlyMinor: () => number;
+export const wasmengine_handle: (a: number, b: number, c: number, d: number) => void;
+export const wasmengine_hasPending: (a: number) => number;
+export const wasmengine_new: (a: number, b: number, c: number, d: number) => void;
+export const wasmengine_nextWake: (a: number, b: number) => void;
+export const wasmengine_status: (a: number, b: number) => void;
+export const __wbindgen_export: (a: number, b: number) => number;
+export const __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_export3: (a: number) => void;
+export const __wbindgen_export4: (a: number, b: number, c: number) => void;
+export const __wbindgen_add_to_stack_pointer: (a: number) => number;

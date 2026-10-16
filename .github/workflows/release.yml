@@ -2,7 +2,8 @@ name: Release
 
 # Тег x.y.z (ровно версия из manifest.json, без «v» — так требует каталог плагинов
 # Obsidian): main.js, manifest.json и styles.css с аттестацией происхождения, затем
-# черновик релиза. Ядро — только из выпущенного тега selfsync (подмодуль core/).
+# черновик релиза. Ядро — только из выпущенного тега selfsync: core/ побайтно
+# совпадает с его свежей сборкой (scripts/core.sh check).
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+"]
@@ -21,8 +22,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: true
       - name: Тег, manifest.json, versions.json и package.json совпадают
         run: |
           node -e '
@@ -34,17 +33,12 @@ jobs:
             const bad = [m.version !== tag && "manifest.json", p.version !== tag && "package.json", !(tag in v) && "versions.json"].filter(Boolean);
             if (bad.length) { console.error(`версия ${tag} не совпадает: ${bad.join(", ")}`); process.exit(1); }
           ' "${{ github.ref_name }}"
-      - name: core/ стоит на теге selfsync
-        run: git -C core describe --tags --exact-match
+      - uses: ./.github/actions/core-tools
+      - name: core/ — побайтно сборка тега selfsync
+        run: scripts/core.sh check
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
-      - name: wasm-bindgen и wasm-opt
-        run: |
-          v=$(grep -A1 '^name = "wasm-bindgen"$' core/Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
-          cargo install wasm-bindgen-cli --version "$v" --locked
-          sudo apt-get update && sudo apt-get install -y binaryen
-      - run: core/scripts/build-wasm.sh
       - run: |
           npm ci
           npm run lint
@@ -61,6 +55,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          core=$(git -C core describe --tags --exact-match)
+          read -r _ core commit < core/SOURCE
           gh release create "$TAG" dist/* --draft --verify-tag --title "$TAG" \
-            --notes "Built from selfsync $core (the core/ submodule) in GitHub Actions; the files carry a provenance attestation."
+            --notes "Built in GitHub Actions from selfsync $core ($commit): core/ is byte-identical to a fresh build of that tag. The files carry a provenance attestation."

@@ -12,30 +12,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  plugin:
-    name: Плагин — ядро из тега selfsync, типы, линт Obsidian, тесты
+  core:
+    name: core/ — побайтно сборка тега selfsync
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: true
-      # Ядро собирается только из выпущенного тега открытого selfsync.
-      - name: core/ стоит на теге
-        run: git -C core describe --tags --exact-match
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: core
+      - uses: ./.github/actions/core-tools
+      # Ядро в core/ — не правка руками: исходники и WASM заново собираются из
+      # тега, записанного в core/SOURCE, и сравниваются с тем, что в репозитории.
+      - run: scripts/core.sh check
+
+  plugin:
+    name: Плагин — типы, линт Obsidian, сборка, тесты
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: npm
-      # Версия wasm-bindgen-cli обязана совпадать с крейтом в core/Cargo.lock.
-      - name: wasm-bindgen и wasm-opt
-        run: |
-          v=$(grep -A1 '^name = "wasm-bindgen"$' core/Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
-          cargo install wasm-bindgen-cli --version "$v" --locked
-          sudo apt-get update && sudo apt-get install -y binaryen
-      - run: core/scripts/build-wasm.sh
+      # Как в чистом окружении: без Rust и подмодулей.
       - run: |
           npm ci
           npm run lint
