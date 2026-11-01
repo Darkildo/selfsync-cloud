@@ -50,6 +50,7 @@ interface CloudPart {
   ): Promise<{ handoff: { qr: boolean; pinned: boolean; confirmed?: boolean } | null; password: boolean; vault: string | null }>;
   ownerStep(h: object, confirmed?: boolean): Promise<{ state: string; sas?: string | null; name?: string }>;
   ownerCancel(h: object): Promise<void>;
+  closeHandoffSession(h: object): Promise<boolean>;
   joinerCancel(h: object): Promise<void>;
   joinerStep(h: object): Promise<{ state: string; sas?: string; vault?: boolean }>;
   accountKey(): Uint8Array | null;
@@ -428,6 +429,9 @@ test("облако: ключ аккаунта новым устройствам 
   await a.plugin.cloud.ownerCancel(inv3.handoff ?? {});
   assert.equal((await d.plugin.cloud.joinerStep(rd.handoff ?? {})).state, "gone");
   assert.equal(d.plugin.cloud.accountKey(), null);
+  // Отказанному устройству источник закрывает сессию: она больше не действует.
+  assert.equal(await a.plugin.cloud.closeHandoffSession(inv3.handoff ?? {}), true);
+  assert.equal(await d.plugin.cloud.refreshAccount(), null, "сессия D закрыта");
   const inv4 = await a.plugin.cloud.accountCode("handoff-e");
   const e = await device("handoff-e");
   const re = await e.plugin.cloud.redeemAccount(server.url, inv4.code);

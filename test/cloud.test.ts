@@ -511,7 +511,7 @@ function handoffServer(tamper: { toJoiner?: (pk: string) => string; toOwner?: (p
       if (b.pk && st.joinerPk && !st.ownerPk) st.ownerPk = b.pk as string;
       if (b.wrapped && st.ownerPk && !st.wrapped) st.wrapped = b.wrapped as string;
       const pk = st.joinerPk ? (tamper.toOwner?.(st.joinerPk) ?? st.joinerPk) : null;
-      return { json: { name: "phone", pk, mac: st.joinerPk ? (st.mac ?? null) : null, delivered: st.wrapped !== undefined } };
+      return { json: { name: "phone", pk, mac: st.joinerPk ? (st.mac ?? null) : null, delivered: st.wrapped !== undefined, session_id: st.redeemed ? 41 : null } };
     },
   };
   const joiner: Record<string, Route> = {
@@ -523,7 +523,8 @@ function handoffServer(tamper: { toJoiner?: (pk: string) => string; toOwner?: (p
       return { status: 201, json: { session: "cs_j", account: anonAccount(), vault: "c-v", password: null, handoff: commit ? { commit } : null } };
     },
     "PUT /account/handoff": (b: Record<string, unknown>) => {
-      if (!st.commit || !st.redeemed || st.joinerPk) return { status: 404, json: { code: "no_handoff" } };
+      if (!st.commit || !st.redeemed || st.taken) return { status: 404, json: { code: "no_handoff" } };
+      if (st.joinerPk) return { status: 409, json: { code: "handoff_pk_set" } };
       st.joinerPk = b.pk as string;
       st.mac = (b.mac as string | undefined) ?? null;
       return { status: 204, json: null };
@@ -851,4 +852,78 @@ test("тексты обмена: по QR цифры не «для справки
   } finally {
     setLanguage("ru");
   }
+});
+
+test("ответ на PUT своего ключа потерялся: повтор получает 409 handoff_pk_set — это успех, дальше опрос и ключ", async () => {
+  const { key, srv, src, dst } = await pairOfDevices();
+  const put = srv.joiner["PUT /account/handoff"];
+  let lost = true;
+  srv.joiner["PUT /account/handoff"] = async (b, a) => {
+    const r = await put!(b, a);
+    if (lost) {
+      lost = false;
+      return { status: 502, json: { code: "bad_gateway" } };
+    }
+    return r;
+  };
+  const inv = await src.cloud.accountCode("");
+  const q = linkOf(inv);
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv.code, { secret: q.get("m") ?? undefined, pin: q.get("h") ?? undefined });
+  assert.ok(r.handoff && !r.handoff.sent, "ответ потерян, а ключ на сервере записан");
+  assert.ok(srv.st.joinerPk);
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "waiting" });
+  assert.ok(r.handoff.sent);
+  assert.ok(dst.calls.includes("GET /account/handoff"), "после 409 — опрос");
+  await src.cloud.ownerStep(inv.handoff);
+  await src.cloud.ownerStep(inv.handoff, true);
+  assert.equal((await dst.cloud.joinerStep(r.handoff)).state, "done");
+  assert.deepEqual(dst.cloud.accountKey(), key);
+});
+
+test("ответ на обёртку потерялся: источник не отменяет обмен и пишет «ключ мог быть отправлен»", async () => {
+  const { srv, src, dst } = await pairOfDevices();
+  const post = srv.owner["POST /account/handoff"];
+  srv.owner["POST /account/handoff"] = async (b, a) => {
+    const r = await post!(b, a);
+    return b.wrapped ? { status: 502, json: { code: "bad_gateway" } } : r;
+  };
+  const inv = await src.cloud.accountCode("");
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv.code, { secret: linkOf(inv).get("m") ?? undefined, pin: linkOf(inv).get("h") ?? undefined });
+  assert.ok(r.handoff);
+  await src.cloud.ownerStep(inv.handoff);
+  await assert.rejects(src.cloud.ownerStep(inv.handoff, true), (e: { status?: number }) => e.status === 502);
+  assert.ok(srv.st.wrapped, "обёртка на сервере");
+  // Окно закрыли: отмена стёрла бы доставленный ключ — не отправляется.
+  await src.cloud.ownerCancel(inv.handoff);
+  assert.equal(srv.st.cancels, undefined);
+  // Новое устройство забрало ключ и стёрло обмен; источник не пишет «ключ не передан».
+  assert.equal((await dst.cloud.joinerStep(r.handoff)).state, "done");
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff, true), { state: "maybeSent" });
+});
+
+test("отказ на источнике: сессию подключившегося устройства можно закрыть; без сессии аккаунта — подсказка", async () => {
+  const { srv, src, dst } = await pairOfDevices();
+  let revoked = 0;
+  srv.owner["DELETE /sessions/41"] = (_b, auth) => {
+    assert.equal(auth, "Bearer cs_a");
+    revoked++;
+    return { status: 204, json: null };
+  };
+  const inv = await src.cloud.accountCode("");
+  await dst.cloud.redeemAccount(regionUrl("cis"), inv.code);
+  assert.equal((await src.cloud.ownerStep(inv.handoff)).state, "confirm");
+  assert.equal(inv.handoff.sessionId, 41);
+  await src.cloud.ownerCancel(inv.handoff);
+  assert.equal(await src.cloud.closeHandoffSession(inv.handoff), true);
+  assert.equal(revoked, 1);
+  // Источник без сессии (токен устройства): закрыть сам не может — подсказка, без запроса.
+  const tokenOnly = { ...inv.handoff };
+  src.settings.session = "";
+  const n = src.calls.length;
+  assert.equal(await src.cloud.closeHandoffSession(tokenOnly), false);
+  assert.equal(src.calls.length, n);
+  // Сервер не дал (403) — тоже подсказка.
+  src.settings.session = "cs_a";
+  srv.owner["DELETE /sessions/41"] = () => ({ status: 403, json: { code: "forbidden" } });
+  assert.equal(await src.cloud.closeHandoffSession(inv.handoff), false);
 });

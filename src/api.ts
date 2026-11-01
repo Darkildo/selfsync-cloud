@@ -118,6 +118,8 @@ export interface HandoffOwner {
   mac: string | null;
   /** Обёртка принята сервером. */
   delivered: boolean;
+  /** Сессия нового устройства из `/account/redeem`; `null` или нет поля — ещё не вошло. */
+  session_id?: number | null;
 }
 
 /** Шаг нового устройства: ключ источника и обёртка, когда они есть. */

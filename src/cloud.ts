@@ -64,6 +64,8 @@ export interface OwnerHandoff {
   joiner?: Uint8Array<ArrayBuffer>;
   /** Обёртка принята сервером: дальше 404 — не ошибка, новое устройство её забрало. */
   sent?: boolean;
+  /** Сессия нового устройства: закрыть её после отказа. */
+  sessionId?: number;
   /** Обмен отменён здесь. */
   cancelled?: boolean;
 }
@@ -84,7 +86,9 @@ export type OwnerStep =
   /** Новое устройство вошло, а обмена больше нет: оно отказалось, или истёк. */
   | { state: "aborted" }
   /** Обёртка отправлена, обмен стёрт: проверить на новом устройстве, что ключ принят. */
-  | { state: "sent" };
+  | { state: "sent" }
+  /** Обёртку отправляли, а ответа не было, и обмена больше нет: ключ мог уйти. */
+  | { state: "maybeSent" };
 
 /** Новое устройство в обмене ключом. */
 export interface JoinerHandoff {
@@ -547,7 +551,9 @@ export class Cloud {
       await this.api().handoffJoin(h.pair.pub, h.mac);
     } catch (e) {
       if (e instanceof CloudError && e.status === 404) return false;
-      throw e;
+      // Ответ на прошлый PUT потерялся, а ключ записан: писать его может только
+      // эта сессия — значит, наш. Дальше — опрос.
+      if (!(e instanceof CloudError && e.status === 409 && e.code === "handoff_pk_set")) throw e;
     }
     h.sent = true;
     return true;
@@ -626,11 +632,27 @@ export class Cloud {
   /** Источник отменяет обмен (отказ, окно закрыто): новое устройство увидит, что
    *  обмена больше нет. После отправленной обёртки отменять нечего. */
   async ownerCancel(h: OwnerHandoff): Promise<void> {
-    if (h.sent || h.cancelled) return;
+    // Обёртку уже отправляли (ответ мог потеряться): отмена стёрла бы доставленный ключ.
+    if (h.sent || h.wrapped || h.cancelled) return;
     h.cancelled = true;
     await new CloudApi(h.server, this.http, this.s.session)
       .handoffCancel(h.code, h.token)
       .catch((e: unknown) => console.warn(`selfsync-cloud: handoff cancel failed: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
+  /** Закрыть сессию устройства, которому отказали в ключе. Сессией аккаунта — да;
+   *  без неё (токен устройства) или если сервер не дал — `false`: закрыть в списке входов. */
+  async closeHandoffSession(h: OwnerHandoff): Promise<boolean> {
+    if (h.sessionId === undefined || !this.s.session) return false;
+    try {
+      await new CloudApi(h.server, this.http, this.s.session).revokeSession(h.sessionId);
+    } catch (e) {
+      if (e instanceof CloudError && (e.status === 401 || e.status === 403 || e.status === 404)) return false;
+      throw e;
+    }
+    await this.refreshAccount().catch(() => undefined);
+    this.changed();
+    return true;
   }
 
   /** Шаг источника в обмене: опрос; ключ нового устройства пришёл — ждать
@@ -651,10 +673,13 @@ export class Cloud {
     const gone = (): OwnerStep => {
       // Отменять на сервере уже нечего.
       h.cancelled = true;
-      return h.sent ? { state: "sent" } : h.joiner ? { state: "aborted" } : { state: "expired" };
+      if (h.sent) return { state: "sent" };
+      if (h.wrapped) return { state: "maybeSent" };
+      return h.joiner ? { state: "aborted" } : { state: "expired" };
     };
     const r = await call();
     if (!r) return gone();
+    if (typeof r.session_id === "number") h.sessionId = r.session_id;
     if (r.delivered) {
       h.sent = true;
       return { state: "delivered", name: r.name };

@@ -492,9 +492,11 @@ export class InviteModal extends Modal {
       if (step.state === "confirm") this.confirm(h, el, step.name, step.sas);
       else if (step.state === "delivered") el.createEl("p", { text: t("handoff.delivered", { name: step.name }) });
       else if (step.state === "sent") el.createEl("p", { text: t("handoff.sentUnconfirmed") });
+      else if (step.state === "maybeSent") el.createEl("p", { text: t("handoff.maybeSent"), cls: "mod-warning" });
       else if (step.state === "mismatch") {
         el.createEl("p", { text: t("handoff.ownerMismatch", { name: step.name }), cls: "mod-warning" });
         void this.plugin.cloud.ownerCancel(h);
+        this.offerClose(h, el, step.name);
       } else if (step.state === "aborted") el.createEl("p", { text: t("handoff.aborted"), cls: "mod-warning" });
       else el.createEl("p", { text: t("handoff.expired"), cls: "mod-warning" });
       return;
@@ -519,6 +521,7 @@ export class InviteModal extends Modal {
           el.empty();
           el.createEl("p", { text: t("handoff.rejected"), cls: "mod-warning" });
           void this.plugin.cloud.ownerCancel(h);
+          this.offerClose(h, el, name);
         }),
       )
       .addButton((b) =>
@@ -530,6 +533,25 @@ export class InviteModal extends Modal {
             void this.watch(h, el, true);
           }),
       );
+  }
+
+  /** Отказали в ключе: подключившееся устройство всё равно вошло в аккаунт —
+   *  предложить закрыть его сессию. */
+  private offerClose(h: OwnerHandoff, el: HTMLElement, name: string): void {
+    if (h.sessionId === undefined) return;
+    const row = new Setting(el);
+    row.addButton((b) =>
+      b.setButtonText(t("handoff.closeSession", { name })).onClick(async () => {
+        b.setDisabled(true);
+        try {
+          const ok = await this.plugin.cloud.closeHandoffSession(h);
+          row.setDesc(t(ok ? "handoff.sessionClosed" : "handoff.closeSessionHint", { name }));
+        } catch (e) {
+          row.setDesc(errorText(e));
+          b.setDisabled(false);
+        }
+      }),
+    );
   }
 
   override onClose(): void {
