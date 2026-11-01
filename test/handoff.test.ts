@@ -107,10 +107,10 @@ test("метка разделяет обмены: другая метка — д
   assert.ok(await h.open(b, a.pub, wrapped, label));
 });
 
-/** Векторы открытого selfsync: spec/vectors/handoff.json, коммит 1656463 (ветка
+/** Векторы открытого selfsync: spec/vectors/handoff.json, коммит e45aed6 (ветка
  *  feat/key-handoff), сделаны его генератором scripts/handoff-vectors.mjs. Копия —
  *  test/vectors/handoff.json; случаи с меткой selfsync-cloud/handoff/v1 — наши. */
-test("векторы открытого selfsync (1656463): обе метки совпадают побайтно", async () => {
+test("векторы открытого selfsync (e45aed6): обе метки совпадают побайтно, отпечаток h тоже", async () => {
   const raw = readFileSync(new URL("vectors/handoff.json", import.meta.url), "utf8");
   const cases = (JSON.parse(raw) as { cases: Record<string, string>[] }).cases;
   assert.ok(cases.some((c) => c.prefix === h.HANDOFF_LABEL));
@@ -124,6 +124,9 @@ test("векторы открытого selfsync (1656463): обе метки с
     const b = await pair(c.b_secret, c.b_public);
     assert.deepEqual(a.pub, hex(c.a_public), String(c.prefix));
     assert.deepEqual(await h.commitOf(a.pub), hex(c.commit));
+    assert.ok(c.h, "в векторе есть отпечаток");
+    assert.equal(toB64(h.pinOf(hex(c.commit))), c.h);
+    assert.ok(h.pinOk(hex(c.commit), fromB64(c.h ?? "")));
     assert.deepEqual(await h.macOf(hex(c.link_secret), b.pub), hex(c.mac));
     assert.equal(await h.sas(a.pub, b.pub, c.prefix), c.sas);
     assert.deepEqual(await h.seal(a, b.pub, hex(c.payload), { label: c.prefix, nonce: hex(c.nonce) }), hex(c.wrapped));

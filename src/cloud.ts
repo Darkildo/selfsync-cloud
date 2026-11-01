@@ -62,6 +62,10 @@ export interface OwnerHandoff {
   wrapped?: Uint8Array<ArrayBuffer>;
   /** Ключ нового устройства, под который сделана обёртка. */
   joiner?: Uint8Array<ArrayBuffer>;
+  /** Обёртка принята сервером: дальше 404 — не ошибка, новое устройство её забрало. */
+  sent?: boolean;
+  /** Обмен отменён здесь. */
+  cancelled?: boolean;
 }
 
 /** Где обмен у источника. */
@@ -76,7 +80,11 @@ export type OwnerStep =
   /** Код из QR, а MAC не сошёлся: ключ подменён, не передавать. */
   | { state: "mismatch"; name: string }
   /** Код истёк или уже использован. */
-  | { state: "expired" };
+  | { state: "expired" }
+  /** Новое устройство вошло, а обмена больше нет: оно отказалось, или истёк. */
+  | { state: "aborted" }
+  /** Обёртка отправлена, обмен стёрт: проверить на новом устройстве, что ключ принят. */
+  | { state: "sent" };
 
 /** Новое устройство в обмене ключом. */
 export interface JoinerHandoff {
@@ -98,6 +106,8 @@ export interface JoinerHandoff {
   confirmed?: boolean;
   /** Ключ уже применён: обмен закончен. */
   applied?: boolean;
+  /** Обмен отменён здесь. */
+  cancelled?: boolean;
 }
 
 /** Где обмен у нового устройства. */
@@ -546,26 +556,31 @@ export class Cloud {
   /** Шаг нового устройства в обмене: опрос сессией из кода. Ключ открылся —
    *  запомнить и подключить отложенный vault. */
   async joinerStep(h: JoinerHandoff): Promise<JoinerStep> {
-    if (h.applied) return { state: "gone" };
+    if (h.applied || h.cancelled) return { state: "gone" };
+    // Обмена на сервере нет (отменён там или истёк): стирать здесь нечего.
+    const gone = (): JoinerStep => {
+      h.cancelled = true;
+      return { state: "gone" };
+    };
     if (!h.key) {
-      if (!(await this.joinHandoff(h))) return { state: "gone" };
+      if (!(await this.joinHandoff(h))) return gone();
       // Сетевая ошибка — наружу: окно спросит снова, сервер отдаёт обмен повторно.
       let r;
       try {
         r = await this.api().handoffJoiner();
       } catch (e) {
-        if (e instanceof CloudError && e.status === 404) return { state: "gone" };
+        if (e instanceof CloudError && e.status === 404) return gone();
         throw e;
       }
       if (!r.pk) return { state: "waiting" };
       const a = fromB64(r.pk);
       // Ключ источника должен сойтись с обязательством. Само обязательство — от
       // сервера: без отпечатка из QR подмену обоих ловят только цифры.
-      if (!(await handoff.commitOk(h.commit, a)) || !(await handoff.validPub(a))) return { state: "mismatch" };
+      if (!(await handoff.commitOk(h.commit, a)) || !(await handoff.validPub(a))) return this.joinerMismatch(h);
       h.sas = await handoff.sas(a, h.pair.pub);
       if (!r.wrapped) return { state: "compare", sas: h.sas, ready: false };
       const key = await handoff.open(h.pair, a, fromB64(r.wrapped));
-      if (!key) return { state: "mismatch" };
+      if (!key) return this.joinerMismatch(h);
       h.key = key;
     }
     // Код вручную: ключ не сохраняется, пока здесь не нажали «Цифры совпадают».
@@ -592,6 +607,32 @@ export class Cloud {
     return { state: "done", vault: this.s.vault !== "" };
   }
 
+  private async joinerMismatch(h: JoinerHandoff): Promise<JoinerStep> {
+    await this.joinerCancel(h);
+    return { state: "mismatch" };
+  }
+
+  /** Новое устройство отказывается от обмена (цифры не совпали, подмена, вход
+   *  иначе): источник увидит, что обмена больше нет. Ошибка — только в журнал. */
+  async joinerCancel(h: JoinerHandoff): Promise<void> {
+    if (h.applied || h.cancelled) return;
+    h.cancelled = true;
+    h.key = undefined;
+    await this.api()
+      .handoffDone()
+      .catch((e: unknown) => console.warn(`selfsync-cloud: handoff cancel failed: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
+  /** Источник отменяет обмен (отказ, окно закрыто): новое устройство увидит, что
+   *  обмена больше нет. После отправленной обёртки отменять нечего. */
+  async ownerCancel(h: OwnerHandoff): Promise<void> {
+    if (h.sent || h.cancelled) return;
+    h.cancelled = true;
+    await new CloudApi(h.server, this.http, this.s.session)
+      .handoffCancel(h.code, h.token)
+      .catch((e: unknown) => console.warn(`selfsync-cloud: handoff cancel failed: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
   /** Шаг источника в обмене: опрос; ключ нового устройства пришёл — ждать
    *  `confirmed`: по QR (MAC сошёлся) — согласие одним нажатием, по коду вручную —
    *  раскрыть свой ключ и сверить цифры. Ключ уходит только после согласия. */
@@ -605,9 +646,19 @@ export class Cloud {
         throw e;
       }
     };
+    // Обмена нет: после отправленной обёртки — новое устройство её забрало; после
+    // его входа — оно отказалось (или истёк); иначе код истёк.
+    const gone = (): OwnerStep => {
+      // Отменять на сервере уже нечего.
+      h.cancelled = true;
+      return h.sent ? { state: "sent" } : h.joiner ? { state: "aborted" } : { state: "expired" };
+    };
     const r = await call();
-    if (!r) return { state: "expired" };
-    if (r.delivered) return { state: "delivered", name: r.name };
+    if (!r) return gone();
+    if (r.delivered) {
+      h.sent = true;
+      return { state: "delivered", name: r.name };
+    }
     if (!r.pk) return { state: "waiting" };
     const b = fromB64(r.pk);
     if (!(await handoff.validPub(b))) return { state: "mismatch", name: r.name };
@@ -618,7 +669,8 @@ export class Cloud {
     if (viaQr && !(await handoff.macOk(h.secret, b, fromB64(r.mac ?? "")))) return { state: "mismatch", name: r.name };
     if (!confirmed) {
       // Свой ключ раскрыть сразу: новое устройство покажет цифры (по коду — для
-      // сверки, по QR — для справки). Ключ аккаунта — только после согласия.
+      // сверки, по QR — на случай, если здесь цифры из-за подмены). Ключ аккаунта
+      // — только после согласия.
       await call({ pk: h.pair.pub });
       return { state: "confirm", name: r.name, sas: viaQr ? null : await handoff.sas(h.pair.pub, b) };
     }
@@ -626,8 +678,10 @@ export class Cloud {
     h.wrapped ??= (await handoff.seal(h.pair, b, key)) ?? undefined;
     if (!h.wrapped) return { state: "mismatch", name: r.name };
     const d = await call({ pk: h.pair.pub, wrapped: h.wrapped });
-    if (!d) return { state: "expired" };
-    return d.delivered ? { state: "delivered", name: d.name } : { state: "waiting" };
+    if (!d) return gone();
+    if (!d.delivered) return { state: "waiting" };
+    h.sent = true;
+    return { state: "delivered", name: d.name };
   }
 
   private async connect(server: string, token: string, vault: string, label: string, deviceId: number): Promise<void> {

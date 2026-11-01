@@ -276,13 +276,18 @@ export class CloudApi {
     );
   }
 
+  /** Источник отменяет обмен: новое устройство получит 404. */
+  handoffCancel(code: string, deviceToken?: string): Promise<void> {
+    return this.call("POST", "/account/handoff", { code: code.replace(/[\s-]/g, ""), cancel: true }, deviceToken);
+  }
+
   /** Шаг нового устройства его сессией из `/account/redeem`. Повторяемый до
    *  истечения или `handoffDone`. */
   handoffJoiner(): Promise<HandoffJoiner> {
     return this.call("GET", "/account/handoff");
   }
 
-  /** Новое устройство открыло ключ: обмен можно стереть. */
+  /** Новое устройство открыло ключ или отказалось: обмен можно стереть. */
   handoffDone(): Promise<void> {
     return this.call("DELETE", "/account/handoff");
   }

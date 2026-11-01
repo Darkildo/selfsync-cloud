@@ -49,6 +49,8 @@ interface CloudPart {
     o?: { secret?: string; pin?: string; vault?: string },
   ): Promise<{ handoff: { qr: boolean; pinned: boolean; confirmed?: boolean } | null; password: boolean; vault: string | null }>;
   ownerStep(h: object, confirmed?: boolean): Promise<{ state: string; sas?: string | null; name?: string }>;
+  ownerCancel(h: object): Promise<void>;
+  joinerCancel(h: object): Promise<void>;
   joinerStep(h: object): Promise<{ state: string; sas?: string; vault?: boolean }>;
   accountKey(): Uint8Array | null;
   setEmailPassword(email: string, password: string): Promise<void>;
@@ -416,6 +418,23 @@ test("облако: ключ аккаунта новым устройствам 
   await until(c.plugin, "файлы на C", () => read(c.dir, "note.md") === `${SECRET} handoff\n`);
   // Обмен одноразовый: ключ применён, повторно не применяется.
   assert.equal((await c.plugin.cloud.joinerStep(rc.handoff ?? {})).state, "gone");
+
+  // Отказ одной стороны доходит до другой: источник отменил — новое устройство
+  // видит, что обмена нет; новое отказалось — источник видит, что обмен прерван.
+  const inv3 = await a.plugin.cloud.accountCode("handoff-d");
+  const d = await device("handoff-d");
+  const rd = await d.plugin.cloud.redeemAccount(server.url, inv3.code);
+  assert.equal((await a.plugin.cloud.ownerStep(inv3.handoff ?? {})).state, "confirm");
+  await a.plugin.cloud.ownerCancel(inv3.handoff ?? {});
+  assert.equal((await d.plugin.cloud.joinerStep(rd.handoff ?? {})).state, "gone");
+  assert.equal(d.plugin.cloud.accountKey(), null);
+  const inv4 = await a.plugin.cloud.accountCode("handoff-e");
+  const e = await device("handoff-e");
+  const re = await e.plugin.cloud.redeemAccount(server.url, inv4.code);
+  assert.equal((await a.plugin.cloud.ownerStep(inv4.handoff ?? {})).state, "confirm");
+  assert.equal((await e.plugin.cloud.joinerStep(re.handoff ?? {})).state, "compare");
+  await e.plugin.cloud.joinerCancel(re.handoff ?? {});
+  assert.equal((await a.plugin.cloud.ownerStep(inv4.handoff ?? {}, true)).state, "aborted");
 
   // Ключ аккаунта и секрет QR не уходили на сервер ни в одном запросе и не лежат в его данных.
   const k64 = Buffer.from(Buffer.from(key).toString("base64url"));

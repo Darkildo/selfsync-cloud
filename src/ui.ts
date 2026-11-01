@@ -417,6 +417,8 @@ export class VaultModal extends Modal {
  *  устройстве кода нет. Пока окно открыто, идёт обмен. */
 export class InviteModal extends Modal {
   private alive = false;
+  /** Обмен этого окна: закрыли до передачи ключа — отменить на сервере. */
+  private handoff?: OwnerHandoff;
 
   constructor(
     app: App,
@@ -458,6 +460,7 @@ export class InviteModal extends Modal {
       new Setting(contentEl)
         .setName(t("invite.code", { code }))
         .addButton((b) => b.setButtonText(t("invite.copy")).onClick(() => void navigator.clipboard.writeText(code)));
+      this.handoff = inv.handoff;
       void this.watch(inv.handoff, contentEl.createDiv());
     } catch (e) {
       contentEl.createEl("p", { text: errorText(e), cls: "mod-warning" });
@@ -488,7 +491,11 @@ export class InviteModal extends Modal {
       el.empty();
       if (step.state === "confirm") this.confirm(h, el, step.name, step.sas);
       else if (step.state === "delivered") el.createEl("p", { text: t("handoff.delivered", { name: step.name }) });
-      else if (step.state === "mismatch") el.createEl("p", { text: t("handoff.ownerMismatch", { name: step.name }), cls: "mod-warning" });
+      else if (step.state === "sent") el.createEl("p", { text: t("handoff.sentUnconfirmed") });
+      else if (step.state === "mismatch") {
+        el.createEl("p", { text: t("handoff.ownerMismatch", { name: step.name }), cls: "mod-warning" });
+        void this.plugin.cloud.ownerCancel(h);
+      } else if (step.state === "aborted") el.createEl("p", { text: t("handoff.aborted"), cls: "mod-warning" });
       else el.createEl("p", { text: t("handoff.expired"), cls: "mod-warning" });
       return;
     }
@@ -501,6 +508,8 @@ export class InviteModal extends Modal {
     if (sas === null) {
       el.createEl("p", { text: t("handoff.confirmQr", { name }) });
     } else {
+      // Код из этого QR пришёл бы с MAC: цифры здесь — ввод вручную или подмена.
+      el.createEl("p", { text: t("handoff.noQrCheck", { name }), cls: "mod-warning" });
       el.createEl("p", { text: t("handoff.confirm", { name }) });
       el.createEl("p", { text: sasText(sas), cls: "selfsync-cloud-sas" });
     }
@@ -509,6 +518,7 @@ export class InviteModal extends Modal {
         b.setButtonText(t(sas === null ? "handoff.cancel" : "handoff.noMatch")).onClick(() => {
           el.empty();
           el.createEl("p", { text: t("handoff.rejected"), cls: "mod-warning" });
+          void this.plugin.cloud.ownerCancel(h);
         }),
       )
       .addButton((b) =>
@@ -524,6 +534,7 @@ export class InviteModal extends Modal {
 
   override onClose(): void {
     this.alive = false;
+    if (this.handoff) void this.plugin.cloud.ownerCancel(this.handoff);
     this.contentEl.empty();
   }
 }
@@ -570,7 +581,7 @@ export class HandoffModal extends Modal {
       new Setting(answer)
         .addButton((b) =>
           b.setButtonText(t("handoff.joinNoMatch")).onClick(() => {
-            h.key = undefined;
+            void this.plugin.cloud.joinerCancel(h);
             end(t("handoff.joinRejected"));
           }),
         )
@@ -597,7 +608,11 @@ export class HandoffModal extends Modal {
           return;
         }
         if (step.state === "mismatch") return end(t("handoff.mismatch"));
-        if (step.state === "gone") return end(t("handoff.gone"));
+        if (step.state === "gone") {
+          // Отменили там или истёк: сразу к паролю или фразе.
+          if (!stopped) new Notice(t("handoff.gone"));
+          return this.fallback();
+        }
         if (step.state === "compare" && !stopped) {
           digits.setText(sasText(step.sas));
           if (h.pinned) status.setText(t("handoff.compareQr"));
@@ -625,6 +640,8 @@ export class HandoffModal extends Modal {
 
   override onClose(): void {
     this.alive = false;
+    // Закрыли, не получив ключа (или ушли к паролю): источник увидит отказ.
+    void this.plugin.cloud.joinerCancel(this.h);
     this.contentEl.empty();
   }
 }

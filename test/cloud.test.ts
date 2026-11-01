@@ -12,7 +12,7 @@ import type { Transport } from "../src/api.ts";
 import { Cloud, type Invite } from "../src/cloud.ts";
 import * as handoff from "../src/handoff.ts";
 import type SelfsyncCloudPlugin from "../src/main.ts";
-import { errorText, setLanguage } from "../src/i18n.ts";
+import { errorText, setLanguage, t } from "../src/i18n.ts";
 import { regionUrl } from "../src/regions.ts";
 
 const ACCOUNT_KEY = "selfsync-cloud-account-key";
@@ -495,7 +495,7 @@ test("email и пароль позже: обёртка ключа паролем
  *  сторонам; `evil` — свой ключ источника вместо настоящего: своё обязательство
  *  новому устройству и своя обёртка своего ключа аккаунта. */
 function handoffServer(tamper: { toJoiner?: (pk: string) => string; toOwner?: (pk: string) => string; evil?: { pair: handoff.Pair; key: Uint8Array<ArrayBuffer> } } = {}) {
-  const st: { commit?: string; redeemed?: boolean; joinerPk?: string; mac?: string | null; ownerPk?: string; wrapped?: string; taken?: boolean; gets?: number } = {};
+  const st: { commit?: string; redeemed?: boolean; joinerPk?: string; mac?: string | null; ownerPk?: string; wrapped?: string; taken?: boolean; gets?: number; cancels?: number } = {};
   const owner: Record<string, Route> = {
     "POST /account/codes": (b: Record<string, unknown>) => {
       st.commit = b.commit as string | undefined;
@@ -503,6 +503,11 @@ function handoffServer(tamper: { toJoiner?: (pk: string) => string; toOwner?: (p
     },
     "POST /account/handoff": (b: Record<string, unknown>) => {
       if (st.taken || !st.commit) return { status: 404, json: { code: "code_invalid" } };
+      if (b.cancel) {
+        st.taken = true;
+        st.cancels = (st.cancels ?? 0) + 1;
+        return { status: 204, json: null };
+      }
       if (b.pk && st.joinerPk && !st.ownerPk) st.ownerPk = b.pk as string;
       if (b.wrapped && st.ownerPk && !st.wrapped) st.wrapped = b.wrapped as string;
       const pk = st.joinerPk ? (tamper.toOwner?.(st.joinerPk) ?? st.joinerPk) : null;
@@ -589,9 +594,9 @@ test("обмен по QR: MAC сошёлся — ключ уходит по од
   assert.equal(dst.settings.vault, "c-v");
   assert.equal(dst.settings.pendingVault, "");
   assert.equal(dst.sent[0]?.password, await vaultPassword(key, "c-v"));
-  // Обмен стёрт — его больше нет.
+  // Обмен стёрт — его больше нет; источник после отправленной обёртки не пугает «истёк».
   assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "gone" });
-  assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "expired" });
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "sent" });
   // Ни ключа аккаунта, ни секрета QR в запросах обеих сторон.
   const all = JSON.stringify([...src.bodies, ...dst.bodies]);
   assert.ok(!all.includes(toB64(key)));
@@ -767,4 +772,83 @@ test("ответ с обёрткой потерялся: новое устрой
   assert.deepEqual(dst.cloud.accountKey(), key);
   assert.ok(dst.calls.includes("DELETE /account/handoff"));
   assert.ok((srv.st.gets ?? 0) >= 2, "обёртка выдана повторно");
+});
+
+test("отказ нового устройства («Не совпадают», подмена) стирает обмен: источник видит, что он прерван", async () => {
+  const { srv, src, dst } = await pairOfDevices();
+  const inv = await src.cloud.accountCode("");
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv.code);
+  assert.ok(r.handoff);
+  assert.equal((await src.cloud.ownerStep(inv.handoff)).state, "confirm");
+  assert.equal((await dst.cloud.joinerStep(r.handoff)).state, "compare");
+  await dst.cloud.joinerCancel(r.handoff);
+  assert.ok(dst.calls.includes("DELETE /account/handoff"));
+  assert.equal(srv.st.taken, true);
+  // Повторная отмена — без запроса; шаг — «обмена нет».
+  const n = dst.calls.length;
+  await dst.cloud.joinerCancel(r.handoff);
+  assert.equal(dst.calls.length, n);
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "gone" });
+  // Источник: новое устройство вошло, а обмена нет — прерван, ключ не передан.
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff, true), { state: "aborted" });
+  assert.equal(srv.st.wrapped, undefined);
+});
+
+test("подмена у нового устройства — обмен стирается сам", async () => {
+  const eve = await handoff.newPair();
+  const { src, dst } = await pairOfDevices({ toJoiner: () => toB64(eve.pub) });
+  const inv = await src.cloud.accountCode("");
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv.code);
+  assert.ok(r.handoff);
+  await src.cloud.ownerStep(inv.handoff);
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "mismatch" });
+  assert.ok(dst.calls.includes("DELETE /account/handoff"));
+});
+
+test("отказ или закрытие на источнике отменяют обмен: новое устройство видит, что обмена нет", async () => {
+  const { srv, src, dst } = await pairOfDevices();
+  const inv = await src.cloud.accountCode("");
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv.code);
+  assert.ok(r.handoff);
+  assert.equal((await src.cloud.ownerStep(inv.handoff)).state, "confirm");
+  await src.cloud.ownerCancel(inv.handoff);
+  await src.cloud.ownerCancel(inv.handoff);
+  assert.equal(srv.st.cancels, 1, "отмена — один раз");
+  const cancel = src.bodies.find((b) => b.cancel === true);
+  assert.equal(cancel?.code, inv.code);
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "gone" });
+  assert.equal(dst.cloud.accountKey(), null);
+  // Новое устройство ушло к паролю: стирать на сервере уже нечего.
+  const n = dst.calls.length;
+  await dst.cloud.joinerCancel(r.handoff);
+  assert.equal(dst.calls.length, n);
+});
+
+test("источник: 404 до входа — код истёк; после отправленной обёртки отмена не шлётся", async () => {
+  const { srv, src, dst } = await pairOfDevices();
+  const inv = await src.cloud.accountCode("");
+  srv.st.taken = true;
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "expired" });
+  const inv2 = await src.cloud.accountCode("");
+  srv.st.taken = false;
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv2.code, { secret: linkOf(inv2).get("m") ?? undefined, pin: linkOf(inv2).get("h") ?? undefined });
+  assert.ok(r.handoff);
+  await src.cloud.ownerStep(inv2.handoff);
+  assert.deepEqual(await src.cloud.ownerStep(inv2.handoff, true), { state: "delivered", name: "phone" });
+  await src.cloud.ownerCancel(inv2.handoff);
+  assert.equal(srv.st.cancels, undefined, "ключ уже отправлен — отменять нечего");
+});
+
+test("тексты обмена: по QR цифры не «для справки» — расхождение называется подменой", () => {
+  setLanguage("ru");
+  assert.ok(!/для справки/.test(t("handoff.compareQr")));
+  assert.match(t("handoff.compareQr"), /Не совпадают/);
+  assert.match(t("handoff.noQrCheck", { name: "phone" }), /без проверки по QR/);
+  setLanguage("en");
+  try {
+    assert.ok(!/reference/.test(t("handoff.compareQr")));
+    assert.match(t("handoff.compareQr"), /tampering/);
+  } finally {
+    setLanguage("ru");
+  }
 });
