@@ -44,8 +44,8 @@ interface CloudPart {
   redeemAccount(
     server: string,
     code: string,
-    o?: { key?: string; secret?: string; vault?: string },
-  ): Promise<{ key: boolean; handoff: { qr: boolean } | null; password: boolean; vault: string | null }>;
+    o?: { secret?: string; vault?: string },
+  ): Promise<{ handoff: { qr: boolean } | null; password: boolean; vault: string | null }>;
   ownerStep(h: object, confirmed?: boolean): Promise<{ state: string; sas?: string; name?: string }>;
   joinerStep(h: object): Promise<{ state: string; sas?: string; vault?: boolean }>;
   accountKey(): Uint8Array | null;
@@ -59,10 +59,8 @@ interface CloudPart {
   recover(region: string, email: string, phrase: string, password: string): Promise<unknown>;
   createVault(label: string): Promise<void>;
   connectVault(name: string): Promise<void>;
-  redeem(server: string, code: string, vaultPassword?: string): Promise<void>;
   unlock(password?: string): Promise<boolean>;
   changePassword(oldPassword: string, newPassword: string): Promise<boolean>;
-  invite(name: string): Promise<{ code: string; uri: string }>;
   revokeDevice(id: number): Promise<void>;
   refreshAccount(): Promise<{ id: number; devices: { id: number; name: string }[]; sessions: { id: number; name: string; current: boolean }[] } | null>;
 }
@@ -207,20 +205,22 @@ test("облако: регистрация, vault, QR, код, вход, лим�
     return s?.encrypted === true && s.pending === 0 && s.state === "idle";
   });
 
-  // B: QR — пароль vault'а в ссылке, ключ открывается сразу.
-  const inv = await a.plugin.cloud.invite("phone");
+  // B: QR — ключ аккаунта обменом с A, без ввода.
+  const inv = await a.plugin.cloud.accountCode("phone");
   const q = new URL(inv.uri.replace("obsidian://", "https://x/"));
   assert.equal(q.searchParams.get("c"), inv.code);
   const b = await device("phone");
-  await b.plugin.cloud.redeem(q.searchParams.get("s") ?? "", inv.code, q.searchParams.get("k") ?? undefined);
+  const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { secret: q.searchParams.get("m") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
+  await handOver(a.plugin, inv, b.plugin, rb.handoff ?? {});
   await until(b.plugin, "файлы на B", () => read(b.dir, "dir/deep.md") === `${SECRET} deep\n`);
   assert.equal(read(b.dir, "note.md"), `${SECRET}\n`);
 
-  // C: текстовый код — нужен пароль аккаунта.
-  const inv2 = await a.plugin.cloud.invite("tablet");
+  // C: текстовый код, обмена не дождались — пароль аккаунта.
+  const inv2 = await a.plugin.cloud.accountCode("tablet");
   const c = await device("tablet");
-  await c.plugin.cloud.redeem(server.url, inv2.code.replace(/(.{4})/g, "$1-"));
-  await until(c.plugin, "C просит пароль", () => c.plugin.runner?.status().state === "needPassword");
+  const rc = await c.plugin.cloud.redeemAccount(server.url, inv2.code.replace(/(.{4})(?=.)/g, "$1-"));
+  assert.equal(rc.password, true);
+  assert.equal(c.plugin.settings.pendingVault, a.plugin.settings.vault);
   assert.equal(read(c.dir, "note.md"), null, "без ключа ничего не скачано");
   assert.equal(await c.plugin.cloud.unlock("wrong password"), false);
   assert.equal(await c.plugin.cloud.unlock(PASSWORD), true);
@@ -302,7 +302,6 @@ test("облако C7: старт без email, QR аккаунта, вход ф
   assert.ok(q.searchParams.get("m"));
   const b = await device("phone");
   const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { secret: q.searchParams.get("m") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
-  assert.equal(rb.key, false);
   assert.ok(rb.handoff?.qr);
   await handOver(a.plugin, inv, b.plugin, rb.handoff);
   await until(b.plugin, "файлы на B", () => read(b.dir, "note.md") === `${SECRET} c7\n`);
@@ -314,7 +313,7 @@ test("облако C7: старт без email, QR аккаунта, вход ф
   const c = await device("tablet");
   const rc = await c.plugin.cloud.redeemAccount(server.url, inv2.code);
   assert.equal(rc.handoff?.qr, false);
-  assert.deepEqual({ ...rc, handoff: null }, { key: false, handoff: null, password: false, vault: a.plugin.settings.vault });
+  assert.deepEqual({ ...rc, handoff: null }, { handoff: null, password: false, vault: a.plugin.settings.vault });
   assert.equal(c.plugin.settings.pendingVault, a.plugin.settings.vault);
   assert.equal(read(c.dir, "note.md"), null, "без ключа ничего не скачано");
   await c.plugin.cloud.loginPhrase("cis", words.join(" "));

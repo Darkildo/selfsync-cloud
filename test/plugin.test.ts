@@ -106,7 +106,7 @@ test("main.js: настройки без аккаунта — начать ил�
 
 test("main.js: устройство по приглашению без сессии — только вход", async () => {
   // Без токена синк не запускается: проверяется только отрисовка.
-  const plugin = await load({ vault: "c-x", vaultLabel: "Notes" });
+  const plugin = await load({ vault: "c-x", vaultLabel: "Notes" }, { "selfsync-cloud-account-key": "a2V5" });
   try {
     const { rows } = render(plugin);
     const intro = rows.find((r) => r.desc.includes("«Notes»"));
@@ -150,6 +150,43 @@ test("main.js: аккаунт без email — номер вместо адре�
     // Строка состояния напоминает.
     const bar = (plugin as unknown as { statusBar: { text: string } }).statusBar;
     assert.ok(bar.text.includes("фраза"), bar.text);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+test("main.js: ссылки 0.2.x с ключом и приглашения 0.1.x — только сообщение, без запросов", async () => {
+  const dir = await fsp.mkdtemp(join(tmpdir(), "selfsync-cloud-"));
+  const req = Module.createRequire(import.meta.url);
+  const Main = (req(join(ROOT, "main.js")) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
+  const plugin = new Main(obsidian.stubApp(dir, { region: "offline" }), { id: "selfsync-cloud", version: "0.3.0" });
+  const handlers = new Map<string, (p: Record<string, string>) => void>();
+  Object.assign(plugin, { registerObsidianProtocolHandler: (a: string, cb: (p: Record<string, string>) => void) => handlers.set(a, cb) });
+  const requests: unknown[] = [];
+  Object.assign(plugin, { cloud: Object.assign((plugin as unknown as { cloud: object }).cloud, { redeemAccount: (...a: unknown[]) => requests.push(a) }) });
+  await plugin.onload();
+  try {
+    obsidian.shown.length = 0;
+    handlers.get("selfsync-cloud-login")?.({ s: "https://cis.selfsync.cloud", c: "ABCDEFGHIJKLMNOP", k: "a2V5", v: "c-1" });
+    assert.match(obsidian.shown[0] ?? "", /старой версии плагина/);
+    handlers.get("selfsync-cloud-invite")?.({ s: "https://cis.selfsync.cloud", c: "ABCDEFGH", k: "pw" });
+    assert.match(obsidian.shown[1] ?? "", /Устаревшая ссылка-приглашение/);
+    assert.equal(obsidian.shown.length, 2);
+    assert.deepEqual(requests, []);
+  } finally {
+    plugin.onunload();
+  }
+});
+
+test("main.js: ключа аккаунта на устройстве нет — «Подключить устройство» не предлагается", async () => {
+  const plugin = await load({ vault: "c-x", vaultLabel: "Notes", token: "", session: "cs_x" });
+  try {
+    const { rows } = render(plugin);
+    const row = rows.find((r) => r.name === "«Notes»");
+    assert.ok(row, rows.map((r) => r.name).join(" | "));
+    assert.ok(!row.buttons.includes("Подключить устройство"), row.buttons.join(", "));
+    assert.match(row.desc, /нет ключа аккаунта — на новом устройстве войдите фразой восстановления/);
+    assert.ok(!plugin.commands.some((c) => c.id === "invite" && (c as { checkCallback?: (x: boolean) => boolean }).checkCallback?.(true)));
   } finally {
     plugin.onunload();
   }

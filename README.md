@@ -20,6 +20,8 @@ Works on desktop and mobile, Obsidian 1.13 or newer. Do not enable it together w
 
 **More devices.** On a connected device press **Connect a device** and scan the QR code with the new device’s camera: Obsidian opens, signs in, gets the encryption key from the connected device and joins the same vault. Keep the window on the connected device open until the key is sent. Without a camera, type the code shown under the QR under **Already have an account → Enter a code**: both devices show six digits, and the key is sent once you confirm they match. The recovery phrase (or the password, if you added one) also opens the key. Codes work once and expire after 10 minutes. The phrase alone also signs in, with no other device around.
 
+The key is passed only between devices that both run 0.3.0 or later: update the plugin on the connected device first. A device on 0.2.x can still sign in with a code, but then asks for the recovery phrase or the password. QR links and vault invites created by 0.2.x and older no longer work: create a new code.
+
 **Email and password** are optional, in the account settings: with them you can sign in by typing on any device and confirm deletion with the password. One password for the account and the encryption; it never leaves the device.
 
 **Day to day.** Sync runs by itself. Conflicting edits are merged or kept as conflict copies; deleted files and older versions are in the file history and the trash, as in selfsync. The settings show your storage use, the account’s sign-ins and devices (any of them can be revoked) and the plans. You can sign out or delete the account with all its data there too.

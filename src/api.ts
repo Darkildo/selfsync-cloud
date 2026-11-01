@@ -151,12 +151,6 @@ export interface DeviceToken {
   label: string;
 }
 
-export interface Redeemed extends DeviceToken {
-  kdf: string | null;
-  salt: string | null;
-  wrapped_key: string | null;
-}
-
 function credJson(c: Credentials): Record<string, string> {
   return { auth_key: toB64(c.authKey), kdf: kdfJson(c.kdf), salt: toB64(c.salt), wrapped_key: toB64(c.wrappedKey) };
 }
@@ -316,14 +310,5 @@ export class CloudApi {
 
   revokeDevice(id: number): Promise<void> {
     return this.call("DELETE", `/devices/${id}`);
-  }
-
-  /** Приглашение в vault: сессией владельца или токеном устройства этого vault'а. */
-  invite(vault: string, name: string, deviceToken?: string): Promise<{ code: string; expires_at: number }> {
-    return this.call("POST", `/vaults/${encodeURIComponent(vault)}/invites`, { name }, deviceToken);
-  }
-
-  redeem(code: string, name: string): Promise<Redeemed> {
-    return this.call("POST", "/invites/redeem", { code: code.replace(/[\s-]/g, ""), name });
   }
 }

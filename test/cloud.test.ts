@@ -133,7 +133,7 @@ function anonAccount(extra: Record<string, unknown> = {}) {
   };
 }
 
-test("ссылка приглашения: только адрес региона или свой адрес сервиса", async () => {
+test("ссылка входа: только адрес региона или свой адрес сервиса", async () => {
   const f = fake({ serviceUrl: "https://test.example:8443/" });
   const c = f.cloud;
   assert.ok(c.trusted(regionUrl("cis")));
@@ -143,7 +143,7 @@ test("ссылка приглашения: только адрес регион�
   assert.ok(!c.trusted(`${regionUrl("cis")}.evil.example`));
   assert.ok(!c.trusted(""));
   // Чужой сервер: ни запроса, ни подключения.
-  await assert.rejects(c.redeem("https://evil.example", "ABCD1234", "pw"), (e: { code?: string }) => e.code === "untrusted_server");
+  await assert.rejects(c.redeemAccount("https://evil.example", "ABCD1234"), (e: { code?: string }) => e.code === "untrusted_server");
   assert.deepEqual(f.calls, []);
   assert.equal(f.settings.token, "");
   assert.equal(f.restarts, 0);
@@ -172,40 +172,11 @@ test("выход забывает ключ аккаунта, ключ vault'а �
   assert.equal(g.storage.has(ACCOUNT_KEY), false);
 });
 
-/** Учётные данные аккаунта в настройках устройства: как после входа или приглашения. */
+/** Учётные данные аккаунта в настройках устройства: как после входа. */
 async function wrapped(key: Uint8Array<ArrayBuffer>): Promise<Record<string, string>> {
   const c = await credentials(PASSWORD, key, KDF);
   return { kdf: kdfJson(KDF), salt: toB64(c.salt), wrappedKey: toB64(c.wrappedKey) };
 }
-
-function redeemed(wrap: Record<string, string>) {
-  return () => ({ status: 201, json: { token: "t-new", device_id: 7, vault: "c-b", label: "B", kdf: wrap.kdf, salt: wrap.salt, wrapped_key: wrap.wrappedKey } });
-}
-
-test("приглашение в vault другого аккаунта: сессия и ключ прежнего забываются", async () => {
-  const keyA = randomBytes(32);
-  const a = await wrapped(keyA);
-  const b = await wrapped(randomBytes(32));
-  const f = fake({ ...a, session: "cs_a", email: "a@example.com", vault: "c-a", token: "t-a" }, { "POST /invites/redeem": redeemed(b) });
-  f.storage.set(ACCOUNT_KEY, toB64(keyA));
-  await f.cloud.redeem(regionUrl("cis"), "CODE");
-  assert.equal(f.settings.session, "");
-  assert.equal(f.settings.email, "");
-  assert.equal(f.storage.has(ACCOUNT_KEY), false);
-  assert.equal(f.settings.wrappedKey, b.wrappedKey);
-  assert.equal(f.settings.vault, "c-b");
-  assert.equal(f.restarts, 1);
-  // Ключа нет — без пароля vault не открыть, пароль спросят.
-  assert.equal(await f.cloud.unlock(), false);
-  assert.equal(f.sent.length, 0);
-
-  // Тот же аккаунт: сессия остаётся.
-  const g = fake({ ...a, session: "cs_a", email: "a@example.com" }, { "POST /invites/redeem": redeemed(a) });
-  g.storage.set(ACCOUNT_KEY, toB64(keyA));
-  await g.cloud.redeem(regionUrl("cis"), "CODE");
-  assert.equal(g.settings.session, "cs_a");
-  assert.equal(g.storage.get(ACCOUNT_KEY), toB64(keyA));
-});
 
 test("разблокировка паролем выводит ключ из пароля, даже если на устройстве лежит другой", async () => {
   const key = randomBytes(32);
@@ -266,6 +237,7 @@ test("ошибки сервиса и устройства — на языке и
       "no_account",
       "no_account_key",
       "untrusted_server",
+      "client_outdated",
     ];
     for (const code of codes) {
       const text = errorText(Object.assign(new Error("https://x.example"), { code }));
@@ -274,19 +246,6 @@ test("ошибки сервиса и устройства — на языке и
   } finally {
     setLanguage("ru");
   }
-});
-
-test("приглашение без ключа аккаунта: код без пароля vault'а в ссылке", async () => {
-  const route = { "POST /vaults/c-1/invites": () => ({ status: 201, json: { code: "ABCDEFGH", expires_at: 1 } }) };
-  const f = fake({ server: regionUrl("cis"), token: "t-1", vault: "c-1" }, route);
-  const bare = await f.cloud.invite("");
-  assert.equal(bare.withKey, false);
-  assert.equal(new URL(bare.uri.replace("obsidian://", "https://x/")).searchParams.has("k"), false);
-  const key = randomBytes(32);
-  f.storage.set(ACCOUNT_KEY, toB64(key));
-  const full = await f.cloud.invite("");
-  assert.equal(full.withKey, true);
-  assert.equal(new URL(full.uri.replace("obsidian://", "https://x/")).searchParams.get("k"), await vaultPassword(key, "c-1"));
 });
 
 test("«Начать»: аккаунт без email, ключ и фраза рождаются здесь, слова ждут отметки", async () => {
@@ -405,24 +364,15 @@ test("вход фразой: доказательство находит акк�
   assert.equal(h.cloud.accountKey(), null);
 });
 
-test("код аккаунта: с ключом из QR подключается сразу, без ключа ждёт пароль или фразу", async () => {
-  const key = randomBytes(32);
+test("код аккаунта без обмена: сессия есть, vault ждёт пароль или фразу", async () => {
   const routes = {
     "POST /account/redeem": () => ({ status: 201, json: { session: "cs_r", account: anonAccount(), vault: "c-v", password: null } }),
-    "POST /vaults/c-v/devices": () => ({ status: 201, json: { token: "ns_v", device_id: 5, vault: "c-v", label: "Notes" } }),
   };
-  const f = fake({}, routes);
-  const r = await f.cloud.redeemAccount(regionUrl("eu"), "ABCD-EFGH-IJKL-MNOP", { key: toB64(key) });
-  assert.deepEqual(r, { key: true, handoff: null, password: false, vault: "c-v" });
-  assert.equal(f.bodies[0]?.pk, undefined, "ключ из ссылки 0.2.x — обмен не нужен");
-  assert.equal(f.settings.region, "eu", "регион — по адресу из ссылки");
-  assert.equal(f.settings.vault, "c-v");
-  assert.equal(f.sent[0]?.password, await vaultPassword(key, "c-v"));
-  assert.deepEqual(f.cloud.accountKey(), key);
-  // Без ключа: сессия есть, vault отложен; пароля у аккаунта нет — только фраза.
+  // Сессия есть, vault отложен; пароля у аккаунта нет — только фраза.
   const g = fake({}, routes);
-  const r2 = await g.cloud.redeemAccount(regionUrl("cis"), "ABCDEFGHIJKLMNOP");
-  assert.deepEqual(r2, { key: false, handoff: null, password: false, vault: "c-v" });
+  const r2 = await g.cloud.redeemAccount(regionUrl("eu"), "ABCD-EFGH-IJKL-MNOP");
+  assert.deepEqual(r2, { handoff: null, password: false, vault: "c-v" });
+  assert.equal(g.settings.region, "eu", "регион — по адресу из ссылки");
   assert.equal(g.settings.session, "cs_r");
   assert.equal(g.settings.vault, "");
   assert.equal(g.settings.pendingVault, "c-v");
@@ -449,7 +399,7 @@ test("код аккаунта с паролем: пароль открывает
     },
   );
   const r = await f.cloud.redeemAccount(regionUrl("cis"), "ABCDEFGHIJKLMNOP");
-  assert.deepEqual(r, { key: false, handoff: null, password: true, vault: "c-v" });
+  assert.deepEqual(r, { handoff: null, password: true, vault: "c-v" });
   assert.equal(f.settings.hasPassword, true);
   assert.equal(await f.cloud.unlock("wrong password here"), false);
   assert.equal(await f.cloud.unlock(PASSWORD), true);
@@ -458,27 +408,21 @@ test("код аккаунта с паролем: пароль открывает
   assert.equal(f.sent[0]?.password, await vaultPassword(key, "c-v"));
 });
 
-test("ссылка QR аккаунта несёт секрет обмена и vault, но не ключ; без ключа — только код", async () => {
+test("ссылка QR аккаунта несёт секрет обмена и vault, но не ключ; без ключа — кода нет", async () => {
   const key = randomBytes(32);
   const f = fake({ session: "cs_a", vault: "c-1", server: regionUrl("cis") }, { "POST /account/codes": () => ({ status: 201, json: { code: "ABCDEFGHIJKLMNOP", expires_at: 1 } }) });
-  const bare = await f.cloud.accountCode("");
-  const q1 = new URL(bare.uri.replace("obsidian://", "https://x/")).searchParams;
-  assert.equal(bare.withKey, false);
-  assert.equal(bare.handoff, undefined);
-  assert.equal(q1.has("k"), false);
-  assert.equal(q1.has("m"), false, "без ключа обмена нет");
-  assert.equal(f.bodies[0]?.commit, undefined);
-  assert.equal(q1.get("v"), "c-1");
-  assert.equal(q1.get("c"), "ABCDEFGHIJKLMNOP");
+  // Сервер выдаёт коды только с обменом: без ключа — отказ до запроса.
+  await assert.rejects(f.cloud.accountCode(""), (e: { code?: string }) => e.code === "no_account_key");
+  assert.deepEqual(f.calls, []);
   f.storage.set(ACCOUNT_KEY, toB64(key));
   const full = await f.cloud.accountCode("");
   const q2 = new URL(full.uri.replace("obsidian://", "https://x/")).searchParams;
-  assert.equal(full.withKey, true);
   assert.equal(q2.has("k"), false, "ключ аккаунта в ссылку не идёт");
   assert.equal(fromB64(q2.get("m") ?? "").length, 16);
+  assert.equal(q2.get("v"), "c-1");
+  assert.equal(q2.get("c"), "ABCDEFGHIJKLMNOP");
   // На сервер — только обязательство открытого ключа обмена, секрет QR туда не идёт.
-  assert.ok(full.handoff);
-  assert.equal(f.bodies[1]?.commit, toB64(await handoff.commitOf(full.handoff.pair.pub)));
+  assert.equal(f.bodies[0]?.commit, toB64(await handoff.commitOf(full.handoff.pair.pub)));
   assert.ok(!JSON.stringify(f.bodies).includes(q2.get("m") ?? "-"));
   assert.ok(!JSON.stringify(f.bodies).includes(toB64(key)));
   // Без сессии код создаёт токен устройства.
@@ -488,6 +432,7 @@ test("ссылка QR аккаунта несёт секрет обмена и v
       return { status: 201, json: { code: "ABCDEFGHIJKLMNOP", expires_at: 1 } };
     },
   });
+  g.storage.set(ACCOUNT_KEY, toB64(key));
   await g.cloud.accountCode("");
 });
 
@@ -603,7 +548,6 @@ test("обмен по QR: MAC сошёлся — ключ приходит бе�
   assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "waiting" });
   const r = await dst.cloud.redeemAccount(q.get("s") ?? "", inv.code, { secret: q.get("m") ?? undefined, vault: q.get("v") ?? undefined });
   assert.ok(r.handoff?.qr, "код из QR — с MAC");
-  assert.equal(r.key, false);
   assert.equal(dst.settings.pendingVault, "c-v");
   assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "waiting" });
   assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "delivered", name: "phone" });

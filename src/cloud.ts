@@ -36,22 +36,17 @@ const PHRASE_WORDS = "selfsync-cloud-phrase";
 const VAULT_KEY = "selfsync-master-key";
 
 /** Схема ссылки входа в аккаунт (QR): `obsidian://selfsync-cloud-login?s=…&c=…&m=…&v=…`.
- *  `m` — секрет обмена ключом (на сервер не уходит). Ссылки плагина 0.2.x несут
- *  вместо него сам ключ аккаунта (`k`): они ещё принимаются, но устарели. */
+ *  `m` — секрет обмена ключом (на сервер не уходит). Ссылки плагина 0.2.x несли
+ *  вместо него сам ключ аккаунта (`k`): они больше не принимаются. */
 export const LOGIN_ACTION = "selfsync-cloud-login";
-/** Схема ссылки приглашения в vault (плагин 0.1.x): `obsidian://selfsync-cloud-invite?s=…&c=…&k=…`. */
-export const INVITE_ACTION = "selfsync-cloud-invite";
 
 export interface Invite {
   code: string;
   expiresAt: number;
   /** Ссылка для QR: адрес сервиса, код и секрет обмена (на сервер не уходит). */
   uri: string;
-  /** Устройство передаст ключ обменом; без ключа аккаунта на устройстве — нет,
-   *  и новое устройство спросит пароль или фразу. */
-  withKey: boolean;
-  /** Обмен ключом со стороны источника (`ownerStep`); без ключа — нет. */
-  handoff?: OwnerHandoff;
+  /** Обмен ключом со стороны источника (`ownerStep`). */
+  handoff: OwnerHandoff;
 }
 
 /** Источник обмена ключом: своя пара, секрет QR и куда опрашивать. */
@@ -116,8 +111,6 @@ export type PhraseStatus =
 
 /** Итог обмена кода аккаунта: как дальше открыть ключ. */
 export interface RedeemOutcome {
-  /** Ключ аккаунта уже на устройстве (ссылка QR плагина 0.2.x). */
-  key: boolean;
   /** Источник передаст ключ обменом (`joinerStep`); `null` — нет. */
   handoff: JoinerHandoff | null;
   /** У аккаунта есть пароль: им можно открыть ключ. Иначе — только фразой. */
@@ -488,30 +481,24 @@ export class Cloud {
   /** Код аккаунта с другого устройства: сессия сразу, ключ — обменом с
    *  источником (`handoff`, затем `joinerStep`), иначе его откроет пароль или
    *  фраза. `secret` — из ссылки QR: источник узнает свой QR и передаст ключ без
-   *  сверки цифр. `key` — ключ из ссылки плагина 0.2.x (устарело). Vault
-   *  подключается, когда ключ есть; иначе запоминается (`pendingVault`). */
-  async redeemAccount(server: string, code: string, o: { key?: string; secret?: string; vault?: string } = {}): Promise<RedeemOutcome> {
+   *  сверки цифр. Vault запоминается (`pendingVault`) до ключа. */
+  async redeemAccount(server: string, code: string, o: { secret?: string; vault?: string } = {}): Promise<RedeemOutcome> {
     if (!this.trusted(server)) throw new CloudError(0, "untrusted_server", server);
     const srv = server.trim().replace(/\/+$/, "");
-    const key = o.key ? fromB64(o.key) : null;
-    if (key && key.length !== 32) throw new CloudError(0, "bad_key", "bad key in the link");
-    // Ключ уже в ссылке — обмен не нужен. Иначе предложить свой ключ обмена;
-    // секрет не той длины — как код без QR: тогда сверка цифр.
-    const pair = key ? null : await handoff.newPair();
+    // Секрет не той длины — как код без QR: тогда сверка цифр.
+    const pair = await handoff.newPair();
     const secret = o.secret ? fromB64(o.secret) : null;
-    const mac = pair && secret?.length === handoff.SECRET_LEN ? await handoff.macOf(secret, pair.pub) : undefined;
-    const r = await new CloudApi(srv, this.http).redeemAccountCode(code, this.s.deviceName, pair?.pub, mac);
+    const mac = secret?.length === handoff.SECRET_LEN ? await handoff.macOf(secret, pair.pub) : undefined;
+    const r = await new CloudApi(srv, this.http).redeemAccountCode(code, this.s.deviceName, pair.pub, mac);
     const commit = r.handoff?.commit ? fromB64(r.handoff.commit) : null;
-    const offer = pair && commit?.length === 32 ? { commit, pair, qr: mac !== undefined } : null;
-    await this.signedIn(this.regionOf(srv), r.session, r.account, key);
+    const offer = commit?.length === 32 ? { commit, pair, qr: mac !== undefined } : null;
+    await this.signedIn(this.regionOf(srv), r.session, r.account, null);
     const vault = o.vault || r.vault;
-    if (vault && key) {
-      await this.connectVault(vault);
-    } else if (vault) {
+    if (vault) {
       this.s.pendingVault = vault;
       await this.plugin.saveSettings();
     }
-    return { key: key !== null, handoff: offer, password: r.password !== null, vault };
+    return { handoff: offer, password: r.password !== null, vault };
   }
 
   /** Шаг нового устройства в обмене: опрос сессией из кода. Ключ открылся —
@@ -582,24 +569,6 @@ export class Cloud {
     return d.delivered ? { state: "delivered", name: d.name } : { state: "waiting" };
   }
 
-  /** Приглашение в vault (ссылка плагина 0.1.x): по QR (`vaultPw` из ссылки)
-   *  устройство открывает vault сразу, по коду — после ввода пароля (`unlock`). */
-  async redeem(server: string, code: string, vaultPw?: string): Promise<void> {
-    if (!this.trusted(server)) throw new CloudError(0, "untrusted_server", server);
-    const r = await new CloudApi(server.trim().replace(/\/+$/, ""), this.http).redeem(code, this.s.deviceName);
-    // Vault другого аккаунта: сессия и ключ прежнего к нему не подходят (ключ vault'а
-    // вывелся бы не тот, смена пароля пошла бы с чужой солью).
-    if (this.s.wrappedKey && (r.salt !== this.s.salt || r.wrapped_key !== this.s.wrappedKey)) {
-      this.s.email = "";
-      this.s.accountId = 0;
-      this.keepPhrase(null);
-      await this.signedOut();
-    }
-    await this.keepWrap(r.kdf, r.salt, r.wrapped_key);
-    await this.connect(server, r.token, r.vault, r.label, r.device_id);
-    if (vaultPw) this.plugin.runner?.send({ type: "password", password: vaultPw, remember: true });
-  }
-
   private async connect(server: string, token: string, vault: string, label: string, deviceId: number): Promise<void> {
     // Индекс и ключ прежнего vault'а этому не подходят.
     await this.plugin.forgetVault(server.replace(/\/+$/, ""), vault);
@@ -634,30 +603,19 @@ export class Cloud {
   }
 
   /** Код для нового устройства этого аккаунта. Сессией — или токеном устройства,
-   *  если сессии нет. Ключ аккаунта есть на устройстве — код с обязательством
-   *  обмена, в ссылке секрет обмена; сам ключ ни в ссылку, ни на сервер не идёт. */
+   *  если сессии нет. Код с обязательством обмена, в ссылке секрет обмена; сам
+   *  ключ ни в ссылку, ни на сервер не идёт. Без ключа на устройстве — отказ. */
   async accountCode(name: string): Promise<Invite> {
-    const key = this.accountKey();
+    // Сервер выдаёт коды только с обменом: без ключа здесь передавать нечего.
+    this.needAccountKey();
     const server = this.s.server || this.server();
-    const pair = key ? await handoff.newPair() : null;
-    const commit = pair ? await handoff.commitOf(pair.pub) : undefined;
+    const pair = await handoff.newPair();
     const token = this.s.session ? undefined : this.s.token;
-    const r = await this.api(server).accountCode(name, token ? "" : this.s.vault, token, commit);
-    const q = new URLSearchParams({ s: server, c: r.code });
-    const h = pair ? { code: r.code, server, token, pair, secret: randomBytes(handoff.SECRET_LEN) } : undefined;
-    if (h) q.set("m", toB64(h.secret));
+    const r = await this.api(server).accountCode(name, token ? "" : this.s.vault, token, await handoff.commitOf(pair.pub));
+    const h = { code: r.code, server, token, pair, secret: randomBytes(handoff.SECRET_LEN) };
+    const q = new URLSearchParams({ s: server, c: r.code, m: toB64(h.secret) });
     if (this.s.vault) q.set("v", this.s.vault);
-    return { code: r.code, expiresAt: r.expires_at, uri: `obsidian://${LOGIN_ACTION}?${q.toString()}`, withKey: pair !== null, handoff: h };
-  }
-
-  /** Приглашение другого устройства в vault этого устройства (0.1.x). Токеном
-   *  устройства — сессия не нужна; пароль vault'а в ссылку — только если есть ключ. */
-  async invite(name: string): Promise<Invite> {
-    const key = this.accountKey();
-    const r = await this.api(this.s.server).invite(this.s.vault, name, this.s.token);
-    const q = new URLSearchParams({ s: this.s.server, c: r.code });
-    if (key) q.set("k", await vaultPassword(key, this.s.vault));
-    return { code: r.code, expiresAt: r.expires_at, uri: `obsidian://${INVITE_ACTION}?${q.toString()}`, withKey: key !== null };
+    return { code: r.code, expiresAt: r.expires_at, uri: `obsidian://${LOGIN_ACTION}?${q.toString()}`, handoff: h };
   }
 
   /** Отключить это устройство: токен отзывается, ключи забываются, синк стоит.

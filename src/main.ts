@@ -9,11 +9,11 @@ import type { Settings } from "../core/plugin/src/settings.ts";
 import type { EngineConfig } from "../core/plugin/src/types.ts";
 import { protocolVersion } from "../core/plugin/pkg/selfsync_wasm.js";
 import type { Transport } from "./api.ts";
-import { Cloud, INVITE_ACTION, LOGIN_ACTION } from "./cloud.ts";
+import { Cloud, LOGIN_ACTION } from "./cloud.ts";
 import { errorText, setLanguage, t } from "./i18n.ts";
 import { defaultRegion } from "./regions.ts";
 import { CloudSettingTab } from "./settings.ts";
-import { CodeModal, InviteModal, LoginCodeModal, PhraseModal, RecoverModal, StartModal, UnlockModal } from "./ui.ts";
+import { InviteModal, LoginCodeModal, PhraseModal, RecoverModal, StartModal, UnlockModal } from "./ui.ts";
 import { confirm } from "../core/plugin/src/ui/confirm.ts";
 
 export interface CloudSettings extends Settings {
@@ -60,6 +60,8 @@ const TIMEOUT_MS = 30_000;
 /** Напоминание о фразе при запуске — не чаще раза в сутки. */
 const REMIND_MS = 24 * 60 * 60 * 1000;
 const REMIND_AT = "selfsync-cloud-phrase-reminded";
+/** Ссылка приглашения в vault плагина 0.1.x: только сообщение, что она устарела. */
+const OLD_INVITE_ACTION = "selfsync-cloud-invite";
 
 /** HTTP через Obsidian: без CORS, на мобильных тоже. */
 const obsidianTransport: Transport = async (req) => {
@@ -123,7 +125,7 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
       id: "invite",
       name: t("cmd.invite"),
       checkCallback: (checking) => {
-        if (!this.settings.session && !this.settings.token) return false;
+        if ((!this.settings.session && !this.settings.token) || !this.cloud.accountKey()) return false;
         if (!checking) new InviteModal(this.app, this).open();
         return true;
       },
@@ -134,19 +136,17 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
       return true;
     } });
     // QR входа: адрес сервиса, код аккаунта, секрет обмена ключом и vault (секрет —
-    // только в ссылке). Ссылки 0.2.x несут сам ключ аккаунта (`k`) — ещё
-    // принимаются. Ссылку может прислать кто угодно: чужой адрес сервиса не принимается.
+    // только в ссылке). Ссылку может прислать кто угодно: чужой адрес сервиса не принимается.
     this.registerObsidianProtocolHandler(LOGIN_ACTION, (p) => {
       if (!p.s || !p.c) return;
-      if (!this.cloud.trusted(p.s)) new Notice(t("code.untrusted", { server: p.s }), 0);
-      else new LoginCodeModal(this.app, this, { server: p.s, code: p.c, secret: p.m, key: p.k, vault: p.v }).open();
+      // Ссылка 0.2.x несла сам ключ аккаунта (`k`): такие больше не принимаются,
+      // а сервер не выдаёт коды без обмена ключом.
+      if (p.k) new Notice(t("link.oldLogin"), 0);
+      else if (!this.cloud.trusted(p.s)) new Notice(t("code.untrusted", { server: p.s }), 0);
+      else new LoginCodeModal(this.app, this, { server: p.s, code: p.c, secret: p.m, vault: p.v }).open();
     });
-    // Приглашение в vault от плагина 0.1.x.
-    this.registerObsidianProtocolHandler(INVITE_ACTION, (p) => {
-      if (!p.s || !p.c) return;
-      if (!this.cloud.trusted(p.s)) new Notice(t("code.untrusted", { server: p.s }), 0);
-      else new CodeModal(this.app, this, { server: p.s, code: p.c, vaultPassword: p.k }).open();
-    });
+    // Приглашение в vault от плагина 0.1.x (пароль vault'а в ссылке) больше не работает.
+    this.registerObsidianProtocolHandler(OLD_INVITE_ACTION, () => new Notice(t("link.oldInvite"), 0));
   }
 
   protected override openConnect(): void {

@@ -414,7 +414,7 @@ export class VaultModal extends Modal {
 
 /** Код для нового устройства: QR (устройство войдёт и получит ключ обменом сразу)
  *  и текстовый код (ключ — обменом после сверки цифр). Без ключа на этом
- *  устройстве новое спросит пароль или фразу. Пока окно открыто, идёт обмен. */
+ *  устройстве кода нет. Пока окно открыто, идёт обмен. */
 export class InviteModal extends Modal {
   private alive = false;
 
@@ -444,17 +444,21 @@ export class InviteModal extends Modal {
         this.plugin.showPhrase();
       });
     }
+    // Ключ новому устройству передаёт только устройство, на котором он есть.
+    if (!cloud.accountKey()) {
+      contentEl.createEl("p", { text: t("invite.needKey"), cls: "mod-warning" });
+      return;
+    }
     try {
       const inv = await cloud.accountCode("");
       const until = new Date(inv.expiresAt).toLocaleTimeString();
-      const how = this.plugin.settings.hasPassword ? t("invite.codePassword") : t("invite.codePhrase");
-      contentEl.createEl("p", { text: t(inv.withKey ? "invite.desc" : "invite.descNoKey", { until, how }) });
+      contentEl.createEl("p", { text: t("invite.desc", { until }) });
       contentEl.appendChild(qrSvg(document, qrModules(inv.uri)));
       const code = formatCode(inv.code);
       new Setting(contentEl)
         .setName(t("invite.code", { code }))
         .addButton((b) => b.setButtonText(t("invite.copy")).onClick(() => void navigator.clipboard.writeText(code)));
-      if (inv.handoff) void this.watch(inv.handoff, contentEl.createDiv());
+      void this.watch(inv.handoff, contentEl.createDiv());
     } catch (e) {
       contentEl.createEl("p", { text: errorText(e), cls: "mod-warning" });
     }
@@ -596,7 +600,7 @@ export class LoginCodeModal extends Form {
   constructor(
     app: App,
     private plugin: SelfsyncCloudPlugin,
-    private fromQr?: { server: string; code: string; secret?: string; key?: string; vault?: string },
+    private fromQr?: { server: string; code: string; secret?: string; vault?: string },
   ) {
     super(app);
     this.code = fromQr?.code ?? "";
@@ -624,11 +628,7 @@ export class LoginCodeModal extends Form {
     const server = this.fromQr?.server ?? cloud.server(this.regionId);
     if (!server) return t("account.notOpen");
     if (!this.fromQr) this.plugin.settings.region = this.regionId;
-    const r = await cloud.redeemAccount(server, this.code, { secret: this.fromQr?.secret, key: this.fromQr?.key, vault: this.fromQr?.vault });
-    if (r.key) {
-      if (!r.vault) new VaultModal(this.app, this.plugin).open();
-      return null;
-    }
+    const r = await cloud.redeemAccount(server, this.code, { secret: this.fromQr?.secret, vault: this.fromQr?.vault });
     if (r.handoff) {
       new HandoffModal(this.app, this.plugin, r.handoff, r.password).open();
       return null;
@@ -636,49 +636,6 @@ export class LoginCodeModal extends Form {
     // Обмена нет (ключа нет на источнике или он старый): пароль, если он есть у аккаунта, иначе фраза.
     if (r.password) new UnlockModal(this.app, this.plugin).open();
     else new PhraseLoginModal(this.app, this.plugin).open();
-    return null;
-  }
-}
-
-/** Подключение по приглашению в vault (плагин 0.1.x): из QR или вводом кода. */
-export class CodeModal extends Form {
-  private code: string;
-  private regionId: string;
-
-  constructor(
-    app: App,
-    private plugin: SelfsyncCloudPlugin,
-    private fromQr?: { server: string; code: string; vaultPassword?: string },
-  ) {
-    super(app);
-    this.code = fromQr?.code ?? "";
-    this.regionId = plugin.settings.region;
-  }
-
-  override onOpen(): void {
-    this.header(t("code.title"), this.fromQr ? undefined : t("code.desc"));
-    const s = this.plugin.settings;
-    if (s.token) this.contentEl.createEl("p", { text: t("code.replaces", { label: s.vaultLabel || s.vault }), cls: "mod-warning" });
-    if (!this.fromQr) {
-      this.region(
-        () => this.regionId,
-        (v) => (this.regionId = v),
-      );
-      this.text(t("code.code"), "", (v) => (this.code = v));
-    } else {
-      this.contentEl.createEl("p", { text: t("code.from", { code: formatCode(this.code), server: this.fromQr.server }) });
-    }
-    this.footer(t("code.submit"));
-  }
-
-  protected async submit(): Promise<string | null> {
-    const cloud = this.plugin.cloud;
-    const server = this.fromQr?.server ?? cloud.server(this.regionId);
-    if (!server) return t("account.notOpen");
-    if (!this.fromQr) this.plugin.settings.region = this.regionId;
-    await cloud.redeem(server, this.code, this.fromQr?.vaultPassword);
-    // Без пароля vault'а из QR ключ откроет пароль аккаунта.
-    if (!this.fromQr?.vaultPassword && !(await cloud.unlock())) new UnlockModal(this.app, this.plugin).open();
     return null;
   }
 }

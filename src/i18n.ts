@@ -16,7 +16,6 @@ const en = {
   "account.intro": "Sync this vault through Selfsync Cloud. Notes are encrypted on your devices: the service cannot read them. No email needed.",
   "account.register": "Sign up",
   "account.login": "Sign in",
-  "account.haveCode": "I have an invite code",
   "account.invited": "This device is connected to “{label}” by invite. Sign in to manage the account.",
   "account.usage": "Plan {tariff}: {used} of {limit} used · vaults {vaults} · devices {devices}",
   "account.logout": "Sign out",
@@ -93,13 +92,10 @@ const en = {
 
   "invite.title": "Connect a device",
   "invite.desc": "Scan the code with the new device’s camera: it opens Obsidian, signs in and gets the encryption key from this device — keep this window open. Or enter the text code there under “Enter a code” and compare the digits on both screens. Valid until {until}, once.",
-  "invite.descNoKey": "Scan the code with the new device’s camera, or enter the text code there under “Enter a code”. Either way it will ask for {how}: the key is not on this device. Valid until {until}, once.",
+  "invite.needKey": "This device does not have the account key, so it cannot connect a new device. On the new device, sign in with the recovery phrase.",
   "invite.code": "Code: {code}",
   "invite.copy": "Copy the code",
 
-  "code.title": "Connect by invite",
-  "code.desc": "Enter the code from another device. Then enter the account password: it opens the encryption key.",
-  "code.code": "Invite code",
   "code.submit": "Connect",
   "code.invalid": "The code is invalid or expired",
   "code.from": "Code {code} from {server}",
@@ -173,8 +169,6 @@ const en = {
 
   "invite.phraseFirst": "The recovery phrase is not written down yet.",
   "invite.phraseShow": "Show it",
-  "invite.codePassword": "the account password",
-  "invite.codePhrase": "the recovery phrase",
 
   "handoff.ownerWaiting": "Waiting for the new device…",
   "handoff.confirm": "“{name}” should show the same digits:",
@@ -193,6 +187,8 @@ const en = {
   "handoff.gone": "The exchange is over: the code expired or the key was already taken. Sign in with the password or the recovery phrase.",
   "handoff.timeout": "The other device did not send the key. Sign in with the password or the recovery phrase.",
   "handoff.fallback": "Use the password or phrase instead",
+  "link.oldLogin": "This link is from an older version of the Selfsync Cloud plugin and no longer works. Update the plugin to 0.3.0 or later on the device that showed it and create a new code there.",
+  "link.oldInvite": "This vault invite link is outdated and no longer works. Ask for a new code: “Connect a device” on a device of the account.",
 
   "sessions.lastSeen": "last seen {time}",
   "sessions.revoke": "Sign out",
@@ -212,6 +208,7 @@ const en = {
   "cmd.phrase": "Recovery phrase",
   "error.generic": "Error: {message}",
   "error.badKdf": "The service asked for unsafe password protection settings. Nothing was sent; update the plugin or contact support.",
+  "error.outdated": "The service needs a newer version of the plugin. Update Selfsync Cloud and try again.",
 };
 
 type Key = keyof typeof en;
@@ -229,7 +226,6 @@ const ru: Record<Key, string> = {
   "account.intro": "Синхронизация этого vault'а через Selfsync Cloud. Заметки шифруются на ваших устройствах: сервис не может их прочитать. Email не нужен.",
   "account.register": "Зарегистрироваться",
   "account.login": "Войти",
-  "account.haveCode": "У меня есть код приглашения",
   "account.invited": "Устройство подключено к «{label}» по приглашению. Войдите, чтобы управлять аккаунтом.",
   "account.usage": "Тариф {tariff}: занято {used} из {limit} · vault'ов {vaults} · устройств {devices}",
   "account.logout": "Выйти",
@@ -306,13 +302,10 @@ const ru: Record<Key, string> = {
 
   "invite.title": "Подключить устройство",
   "invite.desc": "Наведите камеру нового устройства на код: откроется Obsidian, устройство войдёт и получит ключ шифрования с этого устройства — не закрывайте это окно. Или введите текстовый код там в «Ввести код» и сверьте цифры на обоих экранах. Действует до {until}, один раз.",
-  "invite.descNoKey": "Наведите камеру нового устройства на код или введите текстовый код там в «Ввести код». В обоих случаях оно спросит {how}: ключа на этом устройстве нет. Действует до {until}, один раз.",
+  "invite.needKey": "На этом устройстве нет ключа аккаунта — на новом устройстве войдите фразой восстановления.",
   "invite.code": "Код: {code}",
   "invite.copy": "Скопировать код",
 
-  "code.title": "Подключение по приглашению",
-  "code.desc": "Введите код с другого устройства. Затем — пароль аккаунта: он открывает ключ шифрования.",
-  "code.code": "Код приглашения",
   "code.submit": "Подключить",
   "code.invalid": "Код неверный или истёк",
   "code.from": "Код {code} от {server}",
@@ -386,8 +379,6 @@ const ru: Record<Key, string> = {
 
   "invite.phraseFirst": "Фраза восстановления ещё не записана.",
   "invite.phraseShow": "Показать",
-  "invite.codePassword": "пароль аккаунта",
-  "invite.codePhrase": "фразу восстановления",
 
   "handoff.ownerWaiting": "Ждём новое устройство…",
   "handoff.confirm": "На «{name}» должны быть те же цифры:",
@@ -406,6 +397,8 @@ const ru: Record<Key, string> = {
   "handoff.gone": "Обмен закончился: код истёк или ключ уже забрали. Войдите паролем или фразой восстановления.",
   "handoff.timeout": "Другое устройство не передало ключ. Войдите паролем или фразой восстановления.",
   "handoff.fallback": "Ввести пароль или фразу",
+  "link.oldLogin": "Ссылка от старой версии плагина Selfsync Cloud и больше не работает. Обновите плагин до 0.3.0 или новее на исходном устройстве и создайте код заново.",
+  "link.oldInvite": "Устаревшая ссылка-приглашение в vault больше не работает. Попросите новый код: «Подключить устройство» на устройстве аккаунта.",
 
   "sessions.lastSeen": "на связи {time}",
   "sessions.revoke": "Выйти",
@@ -425,6 +418,7 @@ const ru: Record<Key, string> = {
   "cmd.phrase": "Фраза восстановления",
   "error.generic": "Ошибка: {message}",
   "error.badKdf": "Сервис запросил небезопасные параметры защиты пароля. Ничего не отправлено; обновите плагин или напишите в поддержку.",
+  "error.outdated": "Сервису нужна более новая версия плагина. Обновите Selfsync Cloud и попробуйте снова.",
 };
 
 let lang: "ru" | "en" = "en";
@@ -462,6 +456,7 @@ export function errorText(e: unknown): string {
     no_account_key: "auth.needSignIn",
     no_password: "auth.noPassword",
     has_email: "auth.hasEmail",
+    client_outdated: "error.outdated",
   };
   const k = code ? known[code] : undefined;
   if (k) return t(k);
