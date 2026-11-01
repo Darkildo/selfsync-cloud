@@ -4,14 +4,18 @@
 // и окон облака.
 import { readFileSync, writeFileSync } from "node:fs";
 import { builtinModules } from "node:module";
+import { dirname, join } from "node:path";
 import esbuild from "esbuild";
 
 const production = process.argv[2] === "production";
+// Тесты собирают каждый в свой каталог: параллельные файлы тестов не читают
+// main.js, пока другой его переписывает. styles.css — рядом с main.js.
+const outfile = process.env.SELFSYNC_CLOUD_OUT || "main.js";
 // Версия ядра — из манифеста подмодуля: в настройках видно, из какого тега собран плагин.
 const coreVersion = JSON.parse(readFileSync("core/manifest.json", "utf8")).version;
 
 function writeStyles() {
-  writeFileSync("styles.css", readFileSync("core/plugin/styles.css", "utf8") + "\n" + readFileSync("src/styles.css", "utf8"));
+  writeFileSync(join(dirname(outfile), "styles.css"), readFileSync("core/plugin/styles.css", "utf8") + "\n" + readFileSync("src/styles.css", "utf8"));
 }
 
 const ctx = await esbuild.context({
@@ -20,7 +24,7 @@ const ctx = await esbuild.context({
   format: "cjs",
   target: "es2022",
   platform: "browser",
-  outfile: "main.js",
+  outfile,
   external: ["obsidian", "electron", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
   loader: { ".wasm": "binary" },
   alias: { "selfsync-wasm-bytes": "./core/plugin/pkg/selfsync_wasm_bg.wasm" },

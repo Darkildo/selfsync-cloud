@@ -495,20 +495,25 @@ export class InviteModal extends Modal {
     if (this.alive) status.setText(t("handoff.expired"));
   }
 
-  /** Код введён руками: ключ уходит, только если цифры совпали на обоих экранах. */
-  private confirm(h: OwnerHandoff, el: HTMLElement, name: string, sas: string): void {
-    el.createEl("p", { text: t("handoff.confirm", { name }) });
-    el.createEl("p", { text: sasText(sas), cls: "selfsync-cloud-sas" });
+  /** Ключ уходит только с согласия здесь: по QR — одним нажатием, по коду
+   *  вручную — если цифры совпали на обоих экранах. */
+  private confirm(h: OwnerHandoff, el: HTMLElement, name: string, sas: string | null): void {
+    if (sas === null) {
+      el.createEl("p", { text: t("handoff.confirmQr", { name }) });
+    } else {
+      el.createEl("p", { text: t("handoff.confirm", { name }) });
+      el.createEl("p", { text: sasText(sas), cls: "selfsync-cloud-sas" });
+    }
     new Setting(el)
       .addButton((b) =>
-        b.setButtonText(t("handoff.noMatch")).onClick(() => {
+        b.setButtonText(t(sas === null ? "handoff.cancel" : "handoff.noMatch")).onClick(() => {
           el.empty();
           el.createEl("p", { text: t("handoff.rejected"), cls: "mod-warning" });
         }),
       )
       .addButton((b) =>
         b
-          .setButtonText(t("handoff.match"))
+          .setButtonText(sas === null ? t("handoff.send", { name }) : t("handoff.match"))
           .setCta()
           .onClick(() => {
             el.empty();

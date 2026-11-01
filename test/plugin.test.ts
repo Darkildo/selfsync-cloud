@@ -3,19 +3,21 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import * as fsp from "node:fs/promises";
 import Module from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { before, test } from "node:test";
 
 import * as obsidian from "../core/plugin/test/obsidian-stub.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
+/** Своя сборка main.js: сквозной тест параллельно собирает свою. */
+const MAIN = join(mkdtempSync(join(tmpdir(), "selfsync-cloud-build-")), "main.js");
 
 before(() => {
-  const b = spawnSync("node", ["esbuild.config.mjs", "production"], { cwd: ROOT, encoding: "utf8" });
+  const b = spawnSync("node", ["esbuild.config.mjs", "production"], { cwd: ROOT, encoding: "utf8", env: { ...process.env, SELFSYNC_CLOUD_OUT: MAIN } });
   assert.equal(b.status, 0, b.stderr);
   // main.js делает require("obsidian") — подставить заглушку.
   const m = Module as unknown as { _load: (req: string, ...rest: unknown[]) => unknown };
@@ -43,7 +45,7 @@ interface LoadedPlugin {
 async function load(data: unknown, storage: Record<string, string> = {}): Promise<LoadedPlugin> {
   const dir = await fsp.mkdtemp(join(tmpdir(), "selfsync-cloud-"));
   const req = Module.createRequire(import.meta.url);
-  const Main = (req(join(ROOT, "main.js")) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
+  const Main = (req(MAIN) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
   // Регион без адреса: отрисовка настроек не ходит в сеть к настоящему сервису.
   const app = obsidian.stubApp(dir, { region: "offline", ...(data as object) });
   Object.assign(app.storage, storage);
@@ -77,7 +79,7 @@ test("main.js: ядро из core/, шифрование обязательно,
     assert.equal(plugin.runner, undefined);
     assert.equal(plugin.settings.region, "offline");
     // styles.css — общие окна ядра и окна облака.
-    const css = readFileSync(join(ROOT, "styles.css"), "utf8");
+    const css = readFileSync(join(dirname(MAIN), "styles.css"), "utf8");
     assert.ok(css.includes(".selfsync-qr") && css.includes(".selfsync-cloud-phrase"));
   } finally {
     plugin.onunload();
@@ -158,7 +160,7 @@ test("main.js: аккаунт без email — номер вместо адре�
 test("main.js: ссылки 0.2.x с ключом и приглашения 0.1.x — только сообщение, без запросов", async () => {
   const dir = await fsp.mkdtemp(join(tmpdir(), "selfsync-cloud-"));
   const req = Module.createRequire(import.meta.url);
-  const Main = (req(join(ROOT, "main.js")) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
+  const Main = (req(MAIN) as { default: new (app: unknown, manifest: unknown) => LoadedPlugin }).default;
   const plugin = new Main(obsidian.stubApp(dir, { region: "offline" }), { id: "selfsync-cloud", version: "0.3.0" });
   const handlers = new Map<string, (p: Record<string, string>) => void>();
   Object.assign(plugin, { registerObsidianProtocolHandler: (a: string, cb: (p: Record<string, string>) => void) => handlers.set(a, cb) });

@@ -3,6 +3,7 @@
 // меткой), и что ловится, если сервер подменяет открытые ключи.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { before, test } from "node:test";
 
 import { fromB64, randomBytes, toB64 } from "../src/account.ts";
@@ -104,4 +105,28 @@ test("метка разделяет обмены: другая метка — д
   assert.ok(wrapped);
   assert.equal(await h.open(b, a.pub, wrapped), null);
   assert.ok(await h.open(b, a.pub, wrapped, label));
+});
+
+/** Векторы открытого selfsync: spec/vectors/handoff.json, коммит 1656463 (ветка
+ *  feat/key-handoff), сделаны его генератором scripts/handoff-vectors.mjs. Копия —
+ *  test/vectors/handoff.json; случаи с меткой selfsync-cloud/handoff/v1 — наши. */
+test("векторы открытого selfsync (1656463): обе метки совпадают побайтно", async () => {
+  const raw = readFileSync(new URL("vectors/handoff.json", import.meta.url), "utf8");
+  const cases = (JSON.parse(raw) as { cases: Record<string, string>[] }).cases;
+  assert.ok(cases.some((c) => c.prefix === h.HANDOFF_LABEL));
+  const hex = (s = "") => Uint8Array.from(s.match(/../g) ?? [], (x) => parseInt(x, 16));
+  const pair = (secret = "", pub = "") => {
+    const p = hex(pub);
+    return h.pairFromJwk({ kty: "EC", crv: "P-256", d: toB64(hex(secret)), x: toB64(p.slice(1, 33)), y: toB64(p.slice(33)) });
+  };
+  for (const c of cases) {
+    const a = await pair(c.a_secret, c.a_public);
+    const b = await pair(c.b_secret, c.b_public);
+    assert.deepEqual(a.pub, hex(c.a_public), String(c.prefix));
+    assert.deepEqual(await h.commitOf(a.pub), hex(c.commit));
+    assert.deepEqual(await h.macOf(hex(c.link_secret), b.pub), hex(c.mac));
+    assert.equal(await h.sas(a.pub, b.pub, c.prefix), c.sas);
+    assert.deepEqual(await h.seal(a, b.pub, hex(c.payload), { label: c.prefix, nonce: hex(c.nonce) }), hex(c.wrapped));
+    assert.deepEqual(await h.open(b, a.pub, hex(c.wrapped), c.prefix), hex(c.payload));
+  }
 });

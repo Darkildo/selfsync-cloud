@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import * as fsp from "node:fs/promises";
 import Module from "node:module";
 import { createServer } from "node:net";
@@ -19,6 +19,8 @@ import { after, before, test } from "node:test";
 import * as obsidian from "../core/plugin/test/obsidian-stub.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
+/** Своя сборка main.js: тест плагина параллельно собирает свою. */
+const MAIN = join(mkdtempSync(join(tmpdir(), "selfsync-cloud-build-")), "main.js");
 const BIN = process.env.SELFSYNC_CLOUD_BIN ?? join(ROOT, "../selfsync-cloud-server/target/debug/selfsync");
 const SKIP = existsSync(BIN) ? false : `нет бинаря облачного сервера ${BIN}`;
 
@@ -46,7 +48,7 @@ interface CloudPart {
     code: string,
     o?: { secret?: string; vault?: string },
   ): Promise<{ handoff: { qr: boolean } | null; password: boolean; vault: string | null }>;
-  ownerStep(h: object, confirmed?: boolean): Promise<{ state: string; sas?: string; name?: string }>;
+  ownerStep(h: object, confirmed?: boolean): Promise<{ state: string; sas?: string | null; name?: string }>;
   joinerStep(h: object): Promise<{ state: string; sas?: string; vault?: boolean }>;
   accountKey(): Uint8Array | null;
   setEmailPassword(email: string, password: string): Promise<void>;
@@ -91,7 +93,7 @@ async function freePort(): Promise<number> {
 
 before(async () => {
   if (SKIP) return;
-  const b = spawnSync("node", ["esbuild.config.mjs", "production"], { cwd: ROOT, encoding: "utf8" });
+  const b = spawnSync("node", ["esbuild.config.mjs", "production"], { cwd: ROOT, encoding: "utf8", env: { ...process.env, SELFSYNC_CLOUD_OUT: MAIN } });
   assert.equal(b.status, 0, b.stderr);
   // Весь HTTP плагинов — через заглушку requestUrl: записываем тела запросов.
   const spied = {
@@ -144,7 +146,9 @@ async function handOver(src: Plugin, inv: { handoff?: object }, dst: Plugin, h: 
     const j = await dst.cloud.joinerStep(h);
     if (j.state === "done") return;
     assert.ok(!["mismatch", "gone", "expired"].includes(o.state) && !["mismatch", "gone"].includes(j.state), `${o.state} / ${j.state}`);
-    if (o.state === "confirm" && j.state === "compare") {
+    // По QR — согласие одним нажатием, по коду — после сверки цифр.
+    if (o.state === "confirm" && o.sas === null) confirmed = true;
+    if (o.state === "confirm" && o.sas && j.state === "compare") {
       assert.equal(o.sas, j.sas, "цифры на обоих экранах");
       confirmed = true;
     }
@@ -155,7 +159,7 @@ async function handOver(src: Plugin, inv: { handoff?: object }, dst: Plugin, h: 
 async function device(name: string): Promise<{ plugin: Plugin; dir: string }> {
   const dir = await fsp.mkdtemp(join(tmpdir(), `selfsync-cloud-${name}-`));
   const req = Module.createRequire(import.meta.url);
-  const Main = (req(join(ROOT, "main.js")) as { default: new (app: unknown, manifest: unknown) => Plugin }).default;
+  const Main = (req(MAIN) as { default: new (app: unknown, manifest: unknown) => Plugin }).default;
   const plugin = new Main(obsidian.stubApp(dir, { serviceUrl: server?.url, deviceName: name }), { id: "selfsync-cloud", version: "0.2.0" });
   await plugin.onload();
   plugins.push(plugin);

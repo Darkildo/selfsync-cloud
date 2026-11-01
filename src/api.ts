@@ -255,14 +255,15 @@ export class CloudApi {
     return this.call("POST", "/account/codes", { name, vault, ...(commit ? { commit: toB64(commit) } : {}) }, deviceToken);
   }
 
-  /** Код аккаунта на сессию. С `pk` (и `mac`, если код из QR) — вход в обмен ключом. */
-  redeemAccountCode(code: string, deviceName: string, pk?: Uint8Array, mac?: Uint8Array): Promise<CodeRedeemed> {
-    return this.call("POST", "/account/redeem", {
-      code: code.replace(/[\s-]/g, ""),
-      device_name: deviceName,
-      ...(pk ? { pk: toB64(pk) } : {}),
-      ...(mac ? { mac: toB64(mac) } : {}),
-    });
+  /** Код аккаунта на сессию; в ответе — обязательство источника, если он передаст ключ. */
+  redeemAccountCode(code: string, deviceName: string): Promise<CodeRedeemed> {
+    return this.call("POST", "/account/redeem", { code: code.replace(/[\s-]/g, ""), device_name: deviceName });
+  }
+
+  /** Новое устройство входит в обмен своим ключом (и MAC, если код из QR) —
+   *  после того как получило обязательство источника. Один раз. */
+  handoffJoin(pk: Uint8Array, mac?: Uint8Array): Promise<void> {
+    return this.call("PUT", "/account/handoff", { pk: toB64(pk), ...(mac ? { mac: toB64(mac) } : {}) });
   }
 
   /** Шаг источника: опрос, раскрытие своего ключа (`pk`) и обёртка (`wrapped`). */

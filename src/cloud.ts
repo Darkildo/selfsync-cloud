@@ -67,8 +67,9 @@ export interface OwnerHandoff {
 export type OwnerStep =
   /** Новое устройство ещё не вошло по коду. */
   | { state: "waiting" }
-  /** Код введён руками: сверить цифры на обоих устройствах и подтвердить здесь. */
-  | { state: "confirm"; name: string; sas: string }
+  /** Подтвердить передачу здесь: по коду вручную — сверив цифры (`sas`) на обоих
+   *  устройствах, по QR (MAC сошёлся, `sas` — `null`) — одним нажатием. */
+  | { state: "confirm"; name: string; sas: string | null }
   /** Ключ передан. */
   | { state: "delivered"; name: string }
   /** Код из QR, а MAC не сошёлся: ключ подменён, не передавать. */
@@ -80,8 +81,12 @@ export type OwnerStep =
 export interface JoinerHandoff {
   commit: Uint8Array<ArrayBuffer>;
   pair: handoff.Pair;
-  /** Код из QR (с MAC): источник передаст ключ без сверки цифр. */
+  /** MAC секретом из QR; нет — код вручную, источник сверит цифры. */
+  mac?: Uint8Array<ArrayBuffer>;
+  /** Код из QR (с MAC): источнику не нужно сверять цифры. */
   qr: boolean;
+  /** Свой ключ уже отдан серверу (`PUT /account/handoff`). */
+  sent: boolean;
 }
 
 /** Где обмен у нового устройства. */
@@ -485,25 +490,46 @@ export class Cloud {
   async redeemAccount(server: string, code: string, o: { secret?: string; vault?: string } = {}): Promise<RedeemOutcome> {
     if (!this.trusted(server)) throw new CloudError(0, "untrusted_server", server);
     const srv = server.trim().replace(/\/+$/, "");
-    // Секрет не той длины — как код без QR: тогда сверка цифр.
-    const pair = await handoff.newPair();
-    const secret = o.secret ? fromB64(o.secret) : null;
-    const mac = secret?.length === handoff.SECRET_LEN ? await handoff.macOf(secret, pair.pub) : undefined;
-    const r = await new CloudApi(srv, this.http).redeemAccountCode(code, this.s.deviceName, pair.pub, mac);
-    const commit = r.handoff?.commit ? fromB64(r.handoff.commit) : null;
-    const offer = commit?.length === 32 ? { commit, pair, qr: mac !== undefined } : null;
+    const r = await new CloudApi(srv, this.http).redeemAccountCode(code, this.s.deviceName);
     await this.signedIn(this.regionOf(srv), r.session, r.account, null);
     const vault = o.vault || r.vault;
     if (vault) {
       this.s.pendingVault = vault;
       await this.plugin.saveSettings();
     }
+    // Свой ключ обмена — только после обязательства источника: иначе нечестный
+    // сервер, придержав ответ, подобрал бы ключ источника под цифры. Секрет не той
+    // длины — как код без QR: тогда сверка цифр.
+    const commit = r.handoff?.commit ? fromB64(r.handoff.commit) : null;
+    let offer: JoinerHandoff | null = null;
+    if (commit?.length === 32) {
+      const pair = await handoff.newPair();
+      const secret = o.secret ? fromB64(o.secret) : null;
+      const mac = secret?.length === handoff.SECRET_LEN ? await handoff.macOf(secret, pair.pub) : undefined;
+      offer = { commit, pair, mac, qr: mac !== undefined, sent: false };
+      // Не вышло (нет связи) — `joinerStep` отправит ещё раз; обмена нет — без него.
+      if ((await this.joinHandoff(offer).catch(() => true)) === false) offer = null;
+    }
     return { handoff: offer, password: r.password !== null, vault };
+  }
+
+  /** Отдать свой ключ обмена серверу. `false` — обмена у кода нет. */
+  private async joinHandoff(h: JoinerHandoff): Promise<boolean> {
+    if (h.sent) return true;
+    try {
+      await this.api().handoffJoin(h.pair.pub, h.mac);
+    } catch (e) {
+      if (e instanceof CloudError && e.status === 404) return false;
+      throw e;
+    }
+    h.sent = true;
+    return true;
   }
 
   /** Шаг нового устройства в обмене: опрос сессией из кода. Ключ открылся —
    *  запомнить и подключить отложенный vault. */
   async joinerStep(h: JoinerHandoff): Promise<JoinerStep> {
+    if (!(await this.joinHandoff(h))) return { state: "gone" };
     let r;
     try {
       r = await this.api().handoffJoiner();
@@ -533,9 +559,9 @@ export class Cloud {
     return { state: "done", vault: this.s.vault !== "" };
   }
 
-  /** Шаг источника в обмене: опрос; ключ нового устройства пришёл — по QR (MAC
-   *  сошёлся) передать сразу, по коду вручную — раскрыть свой ключ и ждать
-   *  `confirmed` после сверки цифр. */
+  /** Шаг источника в обмене: опрос; ключ нового устройства пришёл — ждать
+   *  `confirmed`: по QR (MAC сошёлся) — согласие одним нажатием, по коду вручную —
+   *  раскрыть свой ключ и сверить цифры. Ключ уходит только после согласия. */
   async ownerStep(h: OwnerHandoff, confirmed = false): Promise<OwnerStep> {
     const api = new CloudApi(h.server, this.http, this.s.session);
     const call = async (o: { pk?: Uint8Array; wrapped?: Uint8Array } = {}) => {
@@ -557,7 +583,8 @@ export class Cloud {
     h.joiner = b;
     const viaQr = !!r.mac;
     if (viaQr && !(await handoff.macOk(h.secret, b, fromB64(r.mac ?? "")))) return { state: "mismatch", name: r.name };
-    if (!viaQr && !confirmed) {
+    if (!confirmed) {
+      if (viaQr) return { state: "confirm", name: r.name, sas: null };
       await call({ pk: h.pair.pub });
       return { state: "confirm", name: r.name, sas: await handoff.sas(h.pair.pub, b) };
     }
