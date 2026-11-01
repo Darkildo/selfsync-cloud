@@ -8,6 +8,7 @@ import { passwordStrength, qrModules } from "../core/plugin/pkg/selfsync_wasm.js
 import { formatBytes } from "../core/plugin/src/i18n.ts";
 import { qrSvg } from "../core/plugin/src/ui/join.ts";
 import { phraseError } from "../core/plugin/src/ui/recovery.ts";
+import type { JoinerHandoff, OwnerHandoff, OwnerStep } from "./cloud.ts";
 import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
 import { REGIONS, TERMS_URL } from "./regions.ts";
@@ -18,6 +19,19 @@ const WEAK_BITS = 50;
 /** Пароль аккаунта слишком простой: он же защищает ключ шифрования. */
 function weak(password: string): boolean {
   return password.length < 10 || passwordStrength(password) < WEAK_BITS;
+}
+
+/** Опрос обмена ключом. */
+const POLL_MS = 1500;
+/** Обмен у сервера живёт 10 минут с кода и ещё 10 со входа нового устройства. */
+const OWNER_MS = 21 * 60 * 1000;
+const JOINER_MS = 11 * 60 * 1000;
+
+const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+
+/** Цифры сверки парами по три: «123 456». */
+function sasText(sas: string): string {
+  return `${sas.slice(0, 3)} ${sas.slice(3)}`;
 }
 
 /** Код группами по четыре: проще продиктовать и ввести. */
@@ -398,9 +412,12 @@ export class VaultModal extends Modal {
   }
 }
 
-/** Код для нового устройства: QR с ключом аккаунта (устройство войдёт сразу) и
- *  текстовый код (без ключа — спросит пароль или фразу). */
+/** Код для нового устройства: QR (устройство войдёт и получит ключ обменом сразу)
+ *  и текстовый код (ключ — обменом после сверки цифр). Без ключа на этом
+ *  устройстве новое спросит пароль или фразу. Пока окно открыто, идёт обмен. */
 export class InviteModal extends Modal {
+  private alive = false;
+
   constructor(
     app: App,
     private plugin: SelfsyncCloudPlugin,
@@ -409,6 +426,7 @@ export class InviteModal extends Modal {
   }
 
   override onOpen(): void {
+    this.alive = true;
     this.setTitle(t("invite.title"));
     void this.show();
   }
@@ -436,18 +454,141 @@ export class InviteModal extends Modal {
       new Setting(contentEl)
         .setName(t("invite.code", { code }))
         .addButton((b) => b.setButtonText(t("invite.copy")).onClick(() => void navigator.clipboard.writeText(code)));
+      if (inv.handoff) void this.watch(inv.handoff, contentEl.createDiv());
     } catch (e) {
       contentEl.createEl("p", { text: errorText(e), cls: "mod-warning" });
     }
   }
 
+  /** Обмен ключом, пока окно открыто: ждать новое устройство, по QR передать
+   *  ключ сразу, по коду вручную — после сверки цифр. */
+  private async watch(h: OwnerHandoff, el: HTMLElement, confirmed = false): Promise<void> {
+    const status = el.createEl("p", { text: t("handoff.ownerWaiting") });
+    const deadline = Date.now() + OWNER_MS;
+    while (this.alive && Date.now() < deadline) {
+      let step: OwnerStep;
+      try {
+        step = await this.plugin.cloud.ownerStep(h, confirmed);
+      } catch (e) {
+        // Нет связи — пробовать дальше, пока окно открыто.
+        status.setText(errorText(e));
+        await sleep(POLL_MS);
+        continue;
+      }
+      if (!this.alive) return;
+      if (step.state === "waiting") {
+        status.setText(t("handoff.ownerWaiting"));
+        await sleep(POLL_MS);
+        continue;
+      }
+      el.empty();
+      if (step.state === "confirm") this.confirm(h, el, step.name, step.sas);
+      else if (step.state === "delivered") el.createEl("p", { text: t("handoff.delivered", { name: step.name }) });
+      else if (step.state === "mismatch") el.createEl("p", { text: t("handoff.ownerMismatch", { name: step.name }), cls: "mod-warning" });
+      else el.createEl("p", { text: t("handoff.expired"), cls: "mod-warning" });
+      return;
+    }
+    if (this.alive) status.setText(t("handoff.expired"));
+  }
+
+  /** Код введён руками: ключ уходит, только если цифры совпали на обоих экранах. */
+  private confirm(h: OwnerHandoff, el: HTMLElement, name: string, sas: string): void {
+    el.createEl("p", { text: t("handoff.confirm", { name }) });
+    el.createEl("p", { text: sasText(sas), cls: "selfsync-cloud-sas" });
+    new Setting(el)
+      .addButton((b) =>
+        b.setButtonText(t("handoff.noMatch")).onClick(() => {
+          el.empty();
+          el.createEl("p", { text: t("handoff.rejected"), cls: "mod-warning" });
+        }),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText(t("handoff.match"))
+          .setCta()
+          .onClick(() => {
+            el.empty();
+            void this.watch(h, el, true);
+          }),
+      );
+  }
+
   override onClose(): void {
+    this.alive = false;
     this.contentEl.empty();
   }
 }
 
-/** Вход кодом аккаунта: из QR (ключ в ссылке) или вводом кода. Без ключа в
- *  ссылке ключ откроет пароль аккаунта или фраза. */
+/** Новое устройство ждёт ключ аккаунта от источника. По коду вручную показывает
+ *  цифры сверки; не дождались — пароль или фраза. */
+export class HandoffModal extends Modal {
+  private alive = false;
+
+  constructor(
+    app: App,
+    private plugin: SelfsyncCloudPlugin,
+    private h: JoinerHandoff,
+    private password: boolean,
+  ) {
+    super(app);
+  }
+
+  override onOpen(): void {
+    this.alive = true;
+    this.setTitle(t("handoff.title"));
+    void this.wait();
+  }
+
+  private async wait(): Promise<void> {
+    const { contentEl } = this;
+    const status = contentEl.createEl("p", { text: t(this.h.qr ? "handoff.waitQr" : "handoff.waitCode") });
+    const digits = contentEl.createEl("p", { cls: "selfsync-cloud-sas" });
+    new Setting(contentEl).addButton((b) => b.setButtonText(t("handoff.fallback")).onClick(() => this.fallback()));
+    const end = (text: string) => {
+      status.setText(text);
+      status.addClass("mod-warning");
+      digits.setText("");
+    };
+    const deadline = Date.now() + JOINER_MS;
+    while (this.alive && Date.now() < deadline) {
+      try {
+        const step = await this.plugin.cloud.joinerStep(this.h);
+        if (!this.alive) return;
+        if (step.state === "done") {
+          new Notice(step.error === undefined ? t("handoff.done") : `${t("handoff.done")}. ${errorText(step.error)}`);
+          this.close();
+          if (!step.vault) new VaultModal(this.app, this.plugin).open();
+          return;
+        }
+        if (step.state === "mismatch") return end(t("handoff.mismatch"));
+        if (step.state === "gone") return end(t("handoff.gone"));
+        if (step.state === "compare") {
+          status.setText(t("handoff.compare"));
+          digits.setText(sasText(step.sas));
+        }
+      } catch (e) {
+        status.setText(errorText(e));
+      }
+      await sleep(POLL_MS);
+    }
+    if (this.alive) end(t("handoff.timeout"));
+  }
+
+  /** Ключ иначе: пароль, если он есть у аккаунта, иначе фраза. */
+  private fallback(): void {
+    this.close();
+    if (this.password) new UnlockModal(this.app, this.plugin).open();
+    else new PhraseLoginModal(this.app, this.plugin).open();
+  }
+
+  override onClose(): void {
+    this.alive = false;
+    this.contentEl.empty();
+  }
+}
+
+/** Вход кодом аккаунта: из QR (секрет обмена в ссылке) или вводом кода. Ключ
+ *  придёт обменом с источником; без обмена его откроет пароль аккаунта или фраза. */
 export class LoginCodeModal extends Form {
   private code: string;
   private regionId: string;
@@ -455,7 +596,7 @@ export class LoginCodeModal extends Form {
   constructor(
     app: App,
     private plugin: SelfsyncCloudPlugin,
-    private fromQr?: { server: string; code: string; key?: string; vault?: string },
+    private fromQr?: { server: string; code: string; secret?: string; key?: string; vault?: string },
   ) {
     super(app);
     this.code = fromQr?.code ?? "";
@@ -483,12 +624,16 @@ export class LoginCodeModal extends Form {
     const server = this.fromQr?.server ?? cloud.server(this.regionId);
     if (!server) return t("account.notOpen");
     if (!this.fromQr) this.plugin.settings.region = this.regionId;
-    const r = await cloud.redeemAccount(server, this.code, { key: this.fromQr?.key, vault: this.fromQr?.vault });
+    const r = await cloud.redeemAccount(server, this.code, { secret: this.fromQr?.secret, key: this.fromQr?.key, vault: this.fromQr?.vault });
     if (r.key) {
       if (!r.vault) new VaultModal(this.app, this.plugin).open();
       return null;
     }
-    // Ключа в ссылке нет: пароль, если он есть у аккаунта, иначе фраза.
+    if (r.handoff) {
+      new HandoffModal(this.app, this.plugin, r.handoff, r.password).open();
+      return null;
+    }
+    // Обмена нет (ключа нет на источнике или он старый): пароль, если он есть у аккаунта, иначе фраза.
     if (r.password) new UnlockModal(this.app, this.plugin).open();
     else new PhraseLoginModal(this.app, this.plugin).open();
     return null;

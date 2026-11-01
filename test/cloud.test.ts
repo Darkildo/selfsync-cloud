@@ -7,9 +7,10 @@ import { readFileSync } from "node:fs";
 import { before, test } from "node:test";
 
 import { initWasm } from "../core/plugin/src/engine.ts";
-import { credentials, kdfJson, keyAuth, newRecovery, randomBytes, recoveryAuth, recoveryEntropy, toB64, vaultPassword } from "../src/account.ts";
+import { credentials, fromB64, kdfJson, keyAuth, newRecovery, randomBytes, recoveryAuth, recoveryEntropy, toB64, vaultPassword } from "../src/account.ts";
 import type { Transport } from "../src/api.ts";
-import { Cloud } from "../src/cloud.ts";
+import { Cloud, type Invite } from "../src/cloud.ts";
+import * as handoff from "../src/handoff.ts";
 import type SelfsyncCloudPlugin from "../src/main.ts";
 import { errorText, setLanguage } from "../src/i18n.ts";
 import { regionUrl } from "../src/regions.ts";
@@ -412,7 +413,8 @@ test("код аккаунта: с ключом из QR подключается 
   };
   const f = fake({}, routes);
   const r = await f.cloud.redeemAccount(regionUrl("eu"), "ABCD-EFGH-IJKL-MNOP", { key: toB64(key) });
-  assert.deepEqual(r, { key: true, password: false, vault: "c-v" });
+  assert.deepEqual(r, { key: true, handoff: null, password: false, vault: "c-v" });
+  assert.equal(f.bodies[0]?.pk, undefined, "ключ из ссылки 0.2.x — обмен не нужен");
   assert.equal(f.settings.region, "eu", "регион — по адресу из ссылки");
   assert.equal(f.settings.vault, "c-v");
   assert.equal(f.sent[0]?.password, await vaultPassword(key, "c-v"));
@@ -420,7 +422,7 @@ test("код аккаунта: с ключом из QR подключается 
   // Без ключа: сессия есть, vault отложен; пароля у аккаунта нет — только фраза.
   const g = fake({}, routes);
   const r2 = await g.cloud.redeemAccount(regionUrl("cis"), "ABCDEFGHIJKLMNOP");
-  assert.deepEqual(r2, { key: false, password: false, vault: "c-v" });
+  assert.deepEqual(r2, { key: false, handoff: null, password: false, vault: "c-v" });
   assert.equal(g.settings.session, "cs_r");
   assert.equal(g.settings.vault, "");
   assert.equal(g.settings.pendingVault, "c-v");
@@ -447,7 +449,7 @@ test("код аккаунта с паролем: пароль открывает
     },
   );
   const r = await f.cloud.redeemAccount(regionUrl("cis"), "ABCDEFGHIJKLMNOP");
-  assert.deepEqual(r, { key: false, password: true, vault: "c-v" });
+  assert.deepEqual(r, { key: false, handoff: null, password: true, vault: "c-v" });
   assert.equal(f.settings.hasPassword, true);
   assert.equal(await f.cloud.unlock("wrong password here"), false);
   assert.equal(await f.cloud.unlock(PASSWORD), true);
@@ -456,20 +458,29 @@ test("код аккаунта с паролем: пароль открывает
   assert.equal(f.sent[0]?.password, await vaultPassword(key, "c-v"));
 });
 
-test("ссылка QR аккаунта несёт ключ аккаунта и vault; без ключа — только код", async () => {
+test("ссылка QR аккаунта несёт секрет обмена и vault, но не ключ; без ключа — только код", async () => {
   const key = randomBytes(32);
   const f = fake({ session: "cs_a", vault: "c-1", server: regionUrl("cis") }, { "POST /account/codes": () => ({ status: 201, json: { code: "ABCDEFGHIJKLMNOP", expires_at: 1 } }) });
   const bare = await f.cloud.accountCode("");
   const q1 = new URL(bare.uri.replace("obsidian://", "https://x/")).searchParams;
   assert.equal(bare.withKey, false);
+  assert.equal(bare.handoff, undefined);
   assert.equal(q1.has("k"), false);
+  assert.equal(q1.has("m"), false, "без ключа обмена нет");
+  assert.equal(f.bodies[0]?.commit, undefined);
   assert.equal(q1.get("v"), "c-1");
   assert.equal(q1.get("c"), "ABCDEFGHIJKLMNOP");
   f.storage.set(ACCOUNT_KEY, toB64(key));
   const full = await f.cloud.accountCode("");
   const q2 = new URL(full.uri.replace("obsidian://", "https://x/")).searchParams;
   assert.equal(full.withKey, true);
-  assert.equal(q2.get("k"), toB64(key));
+  assert.equal(q2.has("k"), false, "ключ аккаунта в ссылку не идёт");
+  assert.equal(fromB64(q2.get("m") ?? "").length, 16);
+  // На сервер — только обязательство открытого ключа обмена, секрет QR туда не идёт.
+  assert.ok(full.handoff);
+  assert.equal(f.bodies[1]?.commit, toB64(await handoff.commitOf(full.handoff.pair.pub)));
+  assert.ok(!JSON.stringify(f.bodies).includes(q2.get("m") ?? "-"));
+  assert.ok(!JSON.stringify(f.bodies).includes(toB64(key)));
   // Без сессии код создаёт токен устройства.
   const g = fake({ token: "ns_dev", vault: "c-1", server: regionUrl("cis") }, {
     "POST /account/codes": (_b, auth) => {
@@ -529,3 +540,171 @@ test("email и пароль позже: обёртка ключа паролем
   assert.deepEqual(f.cloud.accountKey(), key);
 });
 
+
+/** Обмен ключом на сервере: те же правила, что у `/account/handoff` (каждое поле
+ *  пишется один раз, ключ источника — после ключа нового устройства, обёртка —
+ *  после ключа источника, отдаётся новому устройству один раз). `tamper` —
+ *  нечестный сервер: подменяет то, что отдаёт сторонам. */
+function handoffServer(tamper: { toJoiner?: (pk: string) => string; toOwner?: (pk: string) => string } = {}) {
+  const st: { commit?: string; joinerPk?: string; mac?: string | null; ownerPk?: string; wrapped?: string; taken?: boolean } = {};
+  const owner: Record<string, Route> = {
+    "POST /account/codes": (b: Record<string, unknown>) => {
+      st.commit = b.commit as string | undefined;
+      return { status: 201, json: { code: "ABCDEFGHIJKLMNOP", expires_at: Date.now() + 600_000 } };
+    },
+    "POST /account/handoff": (b: Record<string, unknown>) => {
+      if (st.taken || !st.commit) return { status: 404, json: { code: "code_invalid" } };
+      if (b.pk && st.joinerPk && !st.ownerPk) st.ownerPk = b.pk as string;
+      if (b.wrapped && st.ownerPk && !st.wrapped) st.wrapped = b.wrapped as string;
+      const pk = st.joinerPk ? (tamper.toOwner?.(st.joinerPk) ?? st.joinerPk) : null;
+      return { json: { name: "phone", pk, mac: st.joinerPk ? (st.mac ?? null) : null, delivered: st.wrapped !== undefined } };
+    },
+  };
+  const joiner: Record<string, Route> = {
+    "POST /account/redeem": (b: Record<string, unknown>) => {
+      if (st.commit && b.pk) {
+        st.joinerPk = b.pk as string;
+        st.mac = (b.mac as string | undefined) ?? null;
+      }
+      const offer = st.commit && b.pk ? { commit: st.commit } : null;
+      return { status: 201, json: { session: "cs_j", account: anonAccount(), vault: "c-v", password: null, handoff: offer } };
+    },
+    "GET /account/handoff": () => {
+      if (st.taken || !st.joinerPk) return { status: 404, json: { code: "no_handoff" } };
+      const pk = st.ownerPk ? (tamper.toJoiner?.(st.ownerPk) ?? st.ownerPk) : null;
+      if (st.wrapped) st.taken = true;
+      return { json: { pk, wrapped: st.wrapped ?? null } };
+    },
+    "POST /vaults/c-v/devices": () => ({ status: 201, json: { token: "ns_j", device_id: 9, vault: "c-v", label: "Notes" } }),
+  };
+  return { st, owner, joiner };
+}
+
+/** Источник с ключом аккаунта и новое устройство на одном поддельном сервере. */
+async function pairOfDevices(tamper?: Parameters<typeof handoffServer>[0]) {
+  const key = randomBytes(32);
+  const srv = handoffServer(tamper);
+  const src = fake({ session: "cs_a", vault: "c-v", server: regionUrl("cis") }, srv.owner);
+  src.storage.set(ACCOUNT_KEY, toB64(key));
+  const dst = fake({}, srv.joiner);
+  return { key, srv, src, dst };
+}
+
+function linkOf(inv: Invite): URLSearchParams {
+  return new URL(inv.uri.replace("obsidian://", "https://x/")).searchParams;
+}
+
+test("обмен по QR: MAC сошёлся — ключ приходит без сверки цифр, на сервер ключ не уходит", async () => {
+  const { key, srv, src, dst } = await pairOfDevices();
+  const inv = await src.cloud.accountCode("");
+  const q = linkOf(inv);
+  assert.ok(inv.handoff);
+  // Новое устройство ещё не вошло.
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "waiting" });
+  const r = await dst.cloud.redeemAccount(q.get("s") ?? "", inv.code, { secret: q.get("m") ?? undefined, vault: q.get("v") ?? undefined });
+  assert.ok(r.handoff?.qr, "код из QR — с MAC");
+  assert.equal(r.key, false);
+  assert.equal(dst.settings.pendingVault, "c-v");
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "waiting" });
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "delivered", name: "phone" });
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "done", vault: true });
+  assert.deepEqual(dst.cloud.accountKey(), key);
+  assert.equal(dst.settings.vault, "c-v");
+  assert.equal(dst.settings.pendingVault, "");
+  assert.equal(dst.sent[0]?.password, await vaultPassword(key, "c-v"));
+  // Обёртку забрали — обмена больше нет.
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "gone" });
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "expired" });
+  // Ни ключа аккаунта, ни секрета QR в запросах обеих сторон.
+  const all = JSON.stringify([...src.bodies, ...dst.bodies]);
+  assert.ok(!all.includes(toB64(key)));
+  assert.ok(!all.includes(q.get("m") ?? "-"));
+  assert.ok(srv.st.wrapped);
+});
+
+test("обмен по коду вручную: те же цифры на обоих экранах, ключ уходит только после подтверждения", async () => {
+  const { key, srv, src, dst } = await pairOfDevices();
+  const inv = await src.cloud.accountCode("");
+  assert.ok(inv.handoff);
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), formatted(inv.code));
+  assert.ok(r.handoff && !r.handoff.qr);
+  assert.equal(dst.bodies[0]?.mac, undefined);
+  const o = await src.cloud.ownerStep(inv.handoff);
+  assert.equal(o.state, "confirm");
+  const j = await dst.cloud.joinerStep(r.handoff);
+  assert.equal(j.state, "compare");
+  assert.equal(o.state === "confirm" && j.state === "compare" && o.sas === j.sas, true, "цифры совпадают");
+  assert.equal(srv.st.wrapped, undefined, "до подтверждения обёртки нет");
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff, true), { state: "delivered", name: "phone" });
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "done", vault: true });
+  assert.deepEqual(dst.cloud.accountKey(), key);
+});
+
+test("сервер подменил ключ источника: обязательство не сходится, ключ не принят", async () => {
+  const eve = await handoff.newPair();
+  const { src, dst } = await pairOfDevices({ toJoiner: () => toB64(eve.pub) });
+  const inv = await src.cloud.accountCode("");
+  const q = linkOf(inv);
+  assert.ok(inv.handoff);
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv.code, { secret: q.get("m") ?? undefined });
+  assert.ok(r.handoff);
+  await src.cloud.ownerStep(inv.handoff);
+  assert.deepEqual(await dst.cloud.joinerStep(r.handoff), { state: "mismatch" });
+  assert.equal(dst.cloud.accountKey(), null);
+  assert.equal(dst.settings.vault, "");
+});
+
+test("сервер подменил ключ нового устройства: по QR MAC не сходится, обёртки нет", async () => {
+  const eve = await handoff.newPair();
+  const { srv, src, dst } = await pairOfDevices({ toOwner: () => toB64(eve.pub) });
+  const inv = await src.cloud.accountCode("");
+  const q = linkOf(inv);
+  assert.ok(inv.handoff);
+  await dst.cloud.redeemAccount(regionUrl("cis"), inv.code, { secret: q.get("m") ?? undefined });
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff), { state: "mismatch", name: "phone" });
+  assert.equal(srv.st.wrapped, undefined);
+  assert.equal(srv.st.ownerPk, undefined, "свой ключ не раскрыт");
+});
+
+test("сервер сменил ключ нового устройства после показа цифр: подтверждение не передаёт ключ", async () => {
+  const eve = await handoff.newPair();
+  let swap = false;
+  const { srv, src, dst } = await pairOfDevices({ toOwner: (pk) => (swap ? toB64(eve.pub) : pk) });
+  const inv = await src.cloud.accountCode("");
+  assert.ok(inv.handoff);
+  await dst.cloud.redeemAccount(regionUrl("cis"), inv.code);
+  assert.equal((await src.cloud.ownerStep(inv.handoff)).state, "confirm");
+  swap = true;
+  assert.deepEqual(await src.cloud.ownerStep(inv.handoff, true), { state: "mismatch", name: "phone" });
+  assert.equal(srv.st.wrapped, undefined);
+});
+
+test("старый источник без обмена: новое устройство ждёт пароль или фразу", async () => {
+  const f = fake({}, { "POST /account/redeem": () => ({ status: 201, json: { session: "cs_r", account: anonAccount(), vault: "c-v", password: null } }) });
+  const r = await f.cloud.redeemAccount(regionUrl("cis"), "ABCDEFGHIJKLMNOP", { secret: toB64(randomBytes(16)) });
+  assert.equal(r.handoff, null);
+  assert.ok(f.bodies[0]?.pk, "свой ключ обмена предложен");
+  assert.ok(f.bodies[0]?.mac);
+  assert.equal(f.settings.pendingVault, "c-v");
+});
+
+function formatted(code: string): string {
+  return code.replace(/(.{4})(?=.)/g, "$1-");
+}
+
+
+test("ключ получен, а vault не подключился: ключ остаётся, vault выбрать заново", async () => {
+  const { key, srv, src, dst } = await pairOfDevices();
+  srv.joiner["POST /vaults/c-v/devices"] = () => ({ status: 409, json: { code: "device_limit" } });
+  const inv = await src.cloud.accountCode("");
+  const q = linkOf(inv);
+  assert.ok(inv.handoff);
+  const r = await dst.cloud.redeemAccount(regionUrl("cis"), inv.code, { secret: q.get("m") ?? undefined, vault: "c-v" });
+  assert.ok(r.handoff);
+  await src.cloud.ownerStep(inv.handoff);
+  const done = await dst.cloud.joinerStep(r.handoff);
+  assert.equal(done.state === "done" && done.vault, false);
+  assert.equal(done.state === "done" && (done.error as { code?: string }).code, "device_limit");
+  assert.deepEqual(dst.cloud.accountKey(), key);
+  assert.equal(dst.settings.pendingVault, "c-v");
+});

@@ -40,8 +40,15 @@ interface CloudPart {
   phraseStatus(): string;
   confirmPhrase(): Promise<void>;
   newPhrase(): Promise<string[]>;
-  accountCode(name: string): Promise<{ code: string; uri: string }>;
-  redeemAccount(server: string, code: string, o?: { key?: string; vault?: string }): Promise<{ key: boolean; password: boolean; vault: string | null }>;
+  accountCode(name: string): Promise<{ code: string; uri: string; handoff?: object }>;
+  redeemAccount(
+    server: string,
+    code: string,
+    o?: { key?: string; secret?: string; vault?: string },
+  ): Promise<{ key: boolean; handoff: { qr: boolean } | null; password: boolean; vault: string | null }>;
+  ownerStep(h: object, confirmed?: boolean): Promise<{ state: string; sas?: string; name?: string }>;
+  joinerStep(h: object): Promise<{ state: string; sas?: string; vault?: boolean }>;
+  accountKey(): Uint8Array | null;
   setEmailPassword(email: string, password: string): Promise<void>;
   deleteAccount(password?: string): Promise<void>;
   logoutAll(): Promise<void>;
@@ -128,6 +135,24 @@ after(() => {
   for (const p of plugins) p.onunload();
   server?.proc.kill();
 });
+
+/** Обмен ключом между источником и новым устройством, как в окнах: опрос с
+ *  обеих сторон; по коду вручную — сверка цифр и подтверждение на источнике. */
+async function handOver(src: Plugin, inv: { handoff?: object }, dst: Plugin, h: object): Promise<void> {
+  assert.ok(inv.handoff);
+  let confirmed = false;
+  for (let i = 0; i < 50; i++) {
+    const o = await src.cloud.ownerStep(inv.handoff, confirmed);
+    const j = await dst.cloud.joinerStep(h);
+    if (j.state === "done") return;
+    assert.ok(!["mismatch", "gone", "expired"].includes(o.state) && !["mismatch", "gone"].includes(j.state), `${o.state} / ${j.state}`);
+    if (o.state === "confirm" && j.state === "compare") {
+      assert.equal(o.sas, j.sas, "цифры на обоих экранах");
+      confirmed = true;
+    }
+  }
+  throw new Error("ключ не передан");
+}
 
 async function device(name: string): Promise<{ plugin: Plugin; dir: string }> {
   const dir = await fsp.mkdtemp(join(tmpdir(), `selfsync-cloud-${name}-`));
@@ -269,23 +294,27 @@ test("облако C7: старт без email, QR аккаунта, вход ф
     return s?.encrypted === true && s.pending === 0 && s.state === "idle";
   });
 
-  // B: QR аккаунта — ключ и vault в ссылке, устройство входит и подключается сразу.
+  // B: QR аккаунта — секрет обмена и vault в ссылке, ключ приходит обменом с A.
   const inv = await a.plugin.cloud.accountCode("phone");
   const q = new URL(inv.uri.replace("obsidian://", "https://x/"));
   assert.equal(q.searchParams.get("c"), inv.code);
-  assert.ok(q.searchParams.get("k"));
+  assert.equal(q.searchParams.has("k"), false);
+  assert.ok(q.searchParams.get("m"));
   const b = await device("phone");
-  const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { key: q.searchParams.get("k") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
-  assert.deepEqual(rb, { key: true, password: false, vault: a.plugin.settings.vault });
+  const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { secret: q.searchParams.get("m") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
+  assert.equal(rb.key, false);
+  assert.ok(rb.handoff?.qr);
+  await handOver(a.plugin, inv, b.plugin, rb.handoff);
   await until(b.plugin, "файлы на B", () => read(b.dir, "note.md") === `${SECRET} c7\n`);
   // На B слов нет, но аккаунт знает: фраза не записана.
   assert.equal(b.plugin.cloud.phraseStatus(), "pending-elsewhere");
 
-  // C: текстовый код без пароля — только фраза.
+  // C: текстовый код без пароля; обмен не дождались — фраза.
   const inv2 = await a.plugin.cloud.accountCode("tablet");
   const c = await device("tablet");
   const rc = await c.plugin.cloud.redeemAccount(server.url, inv2.code);
-  assert.deepEqual(rc, { key: false, password: false, vault: a.plugin.settings.vault });
+  assert.equal(rc.handoff?.qr, false);
+  assert.deepEqual({ ...rc, handoff: null }, { key: false, handoff: null, password: false, vault: a.plugin.settings.vault });
   assert.equal(c.plugin.settings.pendingVault, a.plugin.settings.vault);
   assert.equal(read(c.dir, "note.md"), null, "без ключа ничего не скачано");
   await c.plugin.cloud.loginPhrase("cis", words.join(" "));
@@ -345,3 +374,54 @@ test("облако C7: старт без email, QR аккаунта, вход ф
   }
 });
 
+
+test("облако: ключ аккаунта новым устройствам — обменом по QR и по коду с цифрами, мимо сервера", { skip: SKIP }, async () => {
+  assert.ok(server);
+  sent.length = 0;
+  const a = await device("handoff-a");
+  await fsp.writeFile(join(a.dir, "note.md"), `${SECRET} handoff\n`);
+  await a.plugin.cloud.start("cis", "Notes");
+  await until(a.plugin, "шифрование и отправка на A", () => {
+    const s = a.plugin.runner?.status();
+    return s?.encrypted === true && s.pending === 0 && s.state === "idle";
+  });
+  const key = a.plugin.cloud.accountKey();
+  assert.ok(key);
+
+  // B — по QR: MAC из ссылки, без сверки цифр.
+  const inv = await a.plugin.cloud.accountCode("handoff-b");
+  const q = new URL(inv.uri.replace("obsidian://", "https://x/")).searchParams;
+  const b = await device("handoff-b");
+  const rb = await b.plugin.cloud.redeemAccount(q.get("s") ?? "", inv.code, { secret: q.get("m") ?? undefined, vault: q.get("v") ?? undefined });
+  assert.ok(rb.handoff?.qr);
+  await handOver(a.plugin, inv, b.plugin, rb.handoff);
+  assert.deepEqual(b.plugin.cloud.accountKey(), key);
+  await until(b.plugin, "файлы на B", () => read(b.dir, "note.md") === `${SECRET} handoff\n`);
+
+  // C — код вручную (группами через дефис): цифры совпали, A подтвердил.
+  const inv2 = await a.plugin.cloud.accountCode("handoff-c");
+  const c = await device("handoff-c");
+  const rc = await c.plugin.cloud.redeemAccount(server.url, inv2.code.replace(/(.{4})(?=.)/g, "$1-"));
+  assert.equal(rc.handoff?.qr, false);
+  const before = await a.plugin.cloud.ownerStep(inv2.handoff ?? {});
+  assert.equal(before.state, "confirm", "без подтверждения ключ не уходит");
+  assert.equal((await c.plugin.cloud.joinerStep(rc.handoff ?? {})).state, "compare");
+  await handOver(a.plugin, inv2, c.plugin, rc.handoff ?? {});
+  assert.deepEqual(c.plugin.cloud.accountKey(), key);
+  await until(c.plugin, "файлы на C", () => read(c.dir, "note.md") === `${SECRET} handoff\n`);
+  // Обмен одноразовый: обёртку уже забрали.
+  assert.equal((await c.plugin.cloud.joinerStep(rc.handoff ?? {})).state, "gone");
+
+  // Ключ аккаунта и секрет QR не уходили на сервер ни в одном запросе и не лежат в его данных.
+  const k64 = Buffer.from(Buffer.from(key).toString("base64url"));
+  const m64 = Buffer.from(q.get("m") ?? "-");
+  assert.ok(sent.length > 10);
+  for (const body of sent) {
+    assert.ok(!body.includes(k64), "ключ аккаунта в запросе");
+    assert.ok(!body.includes(m64), "секрет QR в запросе");
+  }
+  for (const f of files(server.data)) {
+    const data = readFileSync(f);
+    assert.ok(!data.includes(Buffer.from(key)) && !data.includes(k64), `ключ аккаунта в ${f}`);
+  }
+});

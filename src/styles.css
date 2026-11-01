@@ -19,3 +19,12 @@
 .selfsync-cloud-phrase-bar {
   color: var(--text-warning);
 }
+
+/* Цифры сверки при передаче ключа: крупно, чтобы сравнить два экрана. */
+.selfsync-cloud-sas {
+  font-family: var(--font-monospace);
+  font-size: 2em;
+  letter-spacing: 0.1em;
+  text-align: center;
+  user-select: text;
+}

@@ -104,6 +104,26 @@ export interface CodeRedeemed {
   /** Vault устройства, создавшего код; `null` — выбрать самому. */
   vault: string | null;
   password: PasswordWrap | null;
+  /** Источник передаст ключ обменом: его обязательство. `null` или нет поля —
+   *  обмена не будет (старый плагин источника, ключа на нём нет). */
+  handoff?: { commit: string } | null;
+}
+
+/** Шаг источника обмена ключом. */
+export interface HandoffOwner {
+  /** Имя нового устройства. */
+  name: string;
+  /** Ключ и MAC нового устройства; `null` — оно ещё не вошло. */
+  pk: string | null;
+  mac: string | null;
+  /** Обёртка принята сервером. */
+  delivered: boolean;
+}
+
+/** Шаг нового устройства: ключ источника и обёртка, когда они есть. */
+export interface HandoffJoiner {
+  pk: string | null;
+  wrapped: string | null;
 }
 
 /** Подтверждение необратимого действия: что есть у устройства. */
@@ -235,13 +255,35 @@ export class CloudApi {
     return this.call("POST", "/account/recovery/confirm");
   }
 
-  /** Код аккаунта для нового устройства: сессией (с vault'ом по желанию) или токеном устройства. */
-  accountCode(name: string, vault: string, deviceToken?: string): Promise<{ code: string; expires_at: number }> {
-    return this.call("POST", "/account/codes", { name, vault }, deviceToken);
+  /** Код аккаунта для нового устройства: сессией (с vault'ом по желанию) или
+   *  токеном устройства. С `commit` источник передаст ключ обменом. */
+  accountCode(name: string, vault: string, deviceToken?: string, commit?: Uint8Array): Promise<{ code: string; expires_at: number }> {
+    return this.call("POST", "/account/codes", { name, vault, ...(commit ? { commit: toB64(commit) } : {}) }, deviceToken);
   }
 
-  redeemAccountCode(code: string, deviceName: string): Promise<CodeRedeemed> {
-    return this.call("POST", "/account/redeem", { code: code.replace(/[\s-]/g, ""), device_name: deviceName });
+  /** Код аккаунта на сессию. С `pk` (и `mac`, если код из QR) — вход в обмен ключом. */
+  redeemAccountCode(code: string, deviceName: string, pk?: Uint8Array, mac?: Uint8Array): Promise<CodeRedeemed> {
+    return this.call("POST", "/account/redeem", {
+      code: code.replace(/[\s-]/g, ""),
+      device_name: deviceName,
+      ...(pk ? { pk: toB64(pk) } : {}),
+      ...(mac ? { mac: toB64(mac) } : {}),
+    });
+  }
+
+  /** Шаг источника: опрос, раскрытие своего ключа (`pk`) и обёртка (`wrapped`). */
+  handoffOwner(code: string, o: { pk?: Uint8Array; wrapped?: Uint8Array } = {}, deviceToken?: string): Promise<HandoffOwner> {
+    return this.call(
+      "POST",
+      "/account/handoff",
+      { code: code.replace(/[\s-]/g, ""), ...(o.pk ? { pk: toB64(o.pk) } : {}), ...(o.wrapped ? { wrapped: toB64(o.wrapped) } : {}) },
+      deviceToken,
+    );
+  }
+
+  /** Шаг нового устройства его сессией из `/account/redeem`. */
+  handoffJoiner(): Promise<HandoffJoiner> {
+    return this.call("GET", "/account/handoff");
   }
 
   revokeSession(id: number): Promise<void> {

@@ -133,12 +133,13 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
       if (!checking) this.showPhrase();
       return true;
     } });
-    // QR входа: адрес сервиса, код аккаунта, ключ аккаунта и vault (ключ — только в
-    // ссылке). Ссылку может прислать кто угодно: чужой адрес сервиса не принимается.
+    // QR входа: адрес сервиса, код аккаунта, секрет обмена ключом и vault (секрет —
+    // только в ссылке). Ссылки 0.2.x несут сам ключ аккаунта (`k`) — ещё
+    // принимаются. Ссылку может прислать кто угодно: чужой адрес сервиса не принимается.
     this.registerObsidianProtocolHandler(LOGIN_ACTION, (p) => {
       if (!p.s || !p.c) return;
       if (!this.cloud.trusted(p.s)) new Notice(t("code.untrusted", { server: p.s }), 0);
-      else new LoginCodeModal(this.app, this, { server: p.s, code: p.c, key: p.k, vault: p.v }).open();
+      else new LoginCodeModal(this.app, this, { server: p.s, code: p.c, secret: p.m, key: p.k, vault: p.v }).open();
     });
     // Приглашение в vault от плагина 0.1.x.
     this.registerObsidianProtocolHandler(INVITE_ACTION, (p) => {
