@@ -46,8 +46,8 @@ interface CloudPart {
   redeemAccount(
     server: string,
     code: string,
-    o?: { secret?: string; vault?: string },
-  ): Promise<{ handoff: { qr: boolean } | null; password: boolean; vault: string | null }>;
+    o?: { secret?: string; pin?: string; vault?: string },
+  ): Promise<{ handoff: { qr: boolean; pinned: boolean; confirmed?: boolean } | null; password: boolean; vault: string | null }>;
   ownerStep(h: object, confirmed?: boolean): Promise<{ state: string; sas?: string | null; name?: string }>;
   joinerStep(h: object): Promise<{ state: string; sas?: string; vault?: boolean }>;
   accountKey(): Uint8Array | null;
@@ -148,9 +148,11 @@ async function handOver(src: Plugin, inv: { handoff?: object }, dst: Plugin, h: 
     assert.ok(!["mismatch", "gone", "expired"].includes(o.state) && !["mismatch", "gone"].includes(j.state), `${o.state} / ${j.state}`);
     // По QR — согласие одним нажатием, по коду — после сверки цифр.
     if (o.state === "confirm" && o.sas === null) confirmed = true;
+    // Код вручную: «совпадают» нажимают на обоих устройствах.
     if (o.state === "confirm" && o.sas && j.state === "compare") {
       assert.equal(o.sas, j.sas, "цифры на обоих экранах");
       confirmed = true;
+      (h as { confirmed?: boolean }).confirmed = true;
     }
   }
   throw new Error("ключ не передан");
@@ -214,7 +216,7 @@ test("облако: регистрация, vault, QR, код, вход, лим�
   const q = new URL(inv.uri.replace("obsidian://", "https://x/"));
   assert.equal(q.searchParams.get("c"), inv.code);
   const b = await device("phone");
-  const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { secret: q.searchParams.get("m") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
+  const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { secret: q.searchParams.get("m") ?? undefined, pin: q.searchParams.get("h") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
   await handOver(a.plugin, inv, b.plugin, rb.handoff ?? {});
   await until(b.plugin, "файлы на B", () => read(b.dir, "dir/deep.md") === `${SECRET} deep\n`);
   assert.equal(read(b.dir, "note.md"), `${SECRET}\n`);
@@ -305,7 +307,7 @@ test("облако C7: старт без email, QR аккаунта, вход ф
   assert.equal(q.searchParams.has("k"), false);
   assert.ok(q.searchParams.get("m"));
   const b = await device("phone");
-  const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { secret: q.searchParams.get("m") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
+  const rb = await b.plugin.cloud.redeemAccount(q.searchParams.get("s") ?? "", inv.code, { secret: q.searchParams.get("m") ?? undefined, pin: q.searchParams.get("h") ?? undefined, vault: q.searchParams.get("v") ?? undefined });
   assert.ok(rb.handoff?.qr);
   await handOver(a.plugin, inv, b.plugin, rb.handoff);
   await until(b.plugin, "файлы на B", () => read(b.dir, "note.md") === `${SECRET} c7\n`);
@@ -395,7 +397,7 @@ test("облако: ключ аккаунта новым устройствам 
   const inv = await a.plugin.cloud.accountCode("handoff-b");
   const q = new URL(inv.uri.replace("obsidian://", "https://x/")).searchParams;
   const b = await device("handoff-b");
-  const rb = await b.plugin.cloud.redeemAccount(q.get("s") ?? "", inv.code, { secret: q.get("m") ?? undefined, vault: q.get("v") ?? undefined });
+  const rb = await b.plugin.cloud.redeemAccount(q.get("s") ?? "", inv.code, { secret: q.get("m") ?? undefined, pin: q.get("h") ?? undefined, vault: q.get("v") ?? undefined });
   assert.ok(rb.handoff?.qr);
   await handOver(a.plugin, inv, b.plugin, rb.handoff);
   assert.deepEqual(b.plugin.cloud.accountKey(), key);
@@ -412,7 +414,7 @@ test("облако: ключ аккаунта новым устройствам 
   await handOver(a.plugin, inv2, c.plugin, rc.handoff ?? {});
   assert.deepEqual(c.plugin.cloud.accountKey(), key);
   await until(c.plugin, "файлы на C", () => read(c.dir, "note.md") === `${SECRET} handoff\n`);
-  // Обмен одноразовый: обёртку уже забрали.
+  // Обмен одноразовый: ключ применён, повторно не применяется.
   assert.equal((await c.plugin.cloud.joinerStep(rc.handoff ?? {})).state, "gone");
 
   // Ключ аккаунта и секрет QR не уходили на сервер ни в одном запросе и не лежат в его данных.

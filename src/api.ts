@@ -276,9 +276,15 @@ export class CloudApi {
     );
   }
 
-  /** Шаг нового устройства его сессией из `/account/redeem`. */
+  /** Шаг нового устройства его сессией из `/account/redeem`. Повторяемый до
+   *  истечения или `handoffDone`. */
   handoffJoiner(): Promise<HandoffJoiner> {
     return this.call("GET", "/account/handoff");
+  }
+
+  /** Новое устройство открыло ключ: обмен можно стереть. */
+  handoffDone(): Promise<void> {
+    return this.call("DELETE", "/account/handoff");
   }
 
   revokeSession(id: number): Promise<void> {

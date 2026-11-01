@@ -35,8 +35,9 @@ const PHRASE_WORDS = "selfsync-cloud-phrase";
 /** Запомненный ключ vault'а открытого плагина: при смене vault'а — забыть. */
 const VAULT_KEY = "selfsync-master-key";
 
-/** Схема ссылки входа в аккаунт (QR): `obsidian://selfsync-cloud-login?s=…&c=…&m=…&v=…`.
- *  `m` — секрет обмена ключом (на сервер не уходит). Ссылки плагина 0.2.x несли
+/** Схема ссылки входа в аккаунт (QR): `obsidian://selfsync-cloud-login?s=…&c=…&m=…&h=…&v=…`.
+ *  `m` — секрет обмена ключом (на сервер не уходит), `h` — отпечаток обязательства
+ *  источника (первые 16 байт, base64url). Ссылки плагина 0.2.x несли
  *  вместо него сам ключ аккаунта (`k`): они больше не принимаются. */
 export const LOGIN_ACTION = "selfsync-cloud-login";
 
@@ -85,16 +86,28 @@ export interface JoinerHandoff {
   mac?: Uint8Array<ArrayBuffer>;
   /** Код из QR (с MAC): источнику не нужно сверять цифры. */
   qr: boolean;
+  /** Обязательство сверено с отпечатком из QR: ключ применяется без сверки цифр здесь. */
+  pinned: boolean;
   /** Свой ключ уже отдан серверу (`PUT /account/handoff`). */
   sent: boolean;
+  /** Цифры сверки, как только ключ источника раскрыт. */
+  sas?: string;
+  /** Открытый ключ аккаунта: без отпечатка ждёт подтверждения цифр здесь. */
+  key?: Uint8Array<ArrayBuffer>;
+  /** Пользователь нажал «Цифры совпадают» на этом устройстве. */
+  confirmed?: boolean;
+  /** Ключ уже применён: обмен закончен. */
+  applied?: boolean;
 }
 
 /** Где обмен у нового устройства. */
 export type JoinerStep =
   /** Источник ещё не раскрыл ключ. */
   | { state: "waiting" }
-  /** Ключ источника сошёлся с обязательством: эти цифры должны быть и там. */
-  | { state: "compare"; sas: string }
+  /** Ключ источника сошёлся с обязательством: эти цифры должны быть и там. Без
+   *  отпечатка из QR ключ применяется только после `confirmed`; `ready` — ключ уже
+   *  получен и ждёт подтверждения. */
+  | { state: "compare"; sas: string; ready: boolean }
   /** Ключ аккаунта открыт; `vault` — подключён ли vault (иначе выбрать), `error` —
    *  почему не подключился. */
   | { state: "done"; vault: boolean; error?: unknown }
@@ -487,10 +500,15 @@ export class Cloud {
    *  источником (`handoff`, затем `joinerStep`), иначе его откроет пароль или
    *  фраза. `secret` — из ссылки QR: источник узнает свой QR и передаст ключ без
    *  сверки цифр. Vault запоминается (`pendingVault`) до ключа. */
-  async redeemAccount(server: string, code: string, o: { secret?: string; vault?: string } = {}): Promise<RedeemOutcome> {
+  async redeemAccount(server: string, code: string, o: { secret?: string; pin?: string; vault?: string } = {}): Promise<RedeemOutcome> {
     if (!this.trusted(server)) throw new CloudError(0, "untrusted_server", server);
     const srv = server.trim().replace(/\/+$/, "");
     const r = await new CloudApi(srv, this.http).redeemAccountCode(code, this.s.deviceName);
+    const commit = r.handoff?.commit ? fromB64(r.handoff.commit) : null;
+    // QR несёт отпечаток обязательства: сервер, подменивший его (а с ним и ключ
+    // источника), не получает здесь ни входа, ни ключа обмена.
+    const pin = o.pin ? fromB64(o.pin) : null;
+    if (pin && !(commit && handoff.pinOk(commit, pin))) throw new CloudError(0, "handoff_mismatch", "the commitment from the server does not match the QR code");
     await this.signedIn(this.regionOf(srv), r.session, r.account, null);
     const vault = o.vault || r.vault;
     if (vault) {
@@ -500,13 +518,12 @@ export class Cloud {
     // Свой ключ обмена — только после обязательства источника: иначе нечестный
     // сервер, придержав ответ, подобрал бы ключ источника под цифры. Секрет не той
     // длины — как код без QR: тогда сверка цифр.
-    const commit = r.handoff?.commit ? fromB64(r.handoff.commit) : null;
     let offer: JoinerHandoff | null = null;
     if (commit?.length === 32) {
       const pair = await handoff.newPair();
       const secret = o.secret ? fromB64(o.secret) : null;
       const mac = secret?.length === handoff.SECRET_LEN ? await handoff.macOf(secret, pair.pub) : undefined;
-      offer = { commit, pair, mac, qr: mac !== undefined, sent: false };
+      offer = { commit, pair, mac, qr: mac !== undefined, pinned: pin !== null, sent: false };
       // Не вышло (нет связи) — `joinerStep` отправит ещё раз; обмена нет — без него.
       if ((await this.joinHandoff(offer).catch(() => true)) === false) offer = null;
     }
@@ -529,22 +546,38 @@ export class Cloud {
   /** Шаг нового устройства в обмене: опрос сессией из кода. Ключ открылся —
    *  запомнить и подключить отложенный vault. */
   async joinerStep(h: JoinerHandoff): Promise<JoinerStep> {
-    if (!(await this.joinHandoff(h))) return { state: "gone" };
-    let r;
-    try {
-      r = await this.api().handoffJoiner();
-    } catch (e) {
-      if (e instanceof CloudError && e.status === 404) return { state: "gone" };
-      throw e;
+    if (h.applied) return { state: "gone" };
+    if (!h.key) {
+      if (!(await this.joinHandoff(h))) return { state: "gone" };
+      // Сетевая ошибка — наружу: окно спросит снова, сервер отдаёт обмен повторно.
+      let r;
+      try {
+        r = await this.api().handoffJoiner();
+      } catch (e) {
+        if (e instanceof CloudError && e.status === 404) return { state: "gone" };
+        throw e;
+      }
+      if (!r.pk) return { state: "waiting" };
+      const a = fromB64(r.pk);
+      // Ключ источника должен сойтись с обязательством. Само обязательство — от
+      // сервера: без отпечатка из QR подмену обоих ловят только цифры.
+      if (!(await handoff.commitOk(h.commit, a)) || !(await handoff.validPub(a))) return { state: "mismatch" };
+      h.sas = await handoff.sas(a, h.pair.pub);
+      if (!r.wrapped) return { state: "compare", sas: h.sas, ready: false };
+      const key = await handoff.open(h.pair, a, fromB64(r.wrapped));
+      if (!key) return { state: "mismatch" };
+      h.key = key;
     }
-    if (!r.pk) return { state: "waiting" };
-    const a = fromB64(r.pk);
-    // Сервер мог подменить ключ источника: обязательство из кода это ловит.
-    if (!(await handoff.commitOk(h.commit, a)) || !(await handoff.validPub(a))) return { state: "mismatch" };
-    if (!r.wrapped) return { state: "compare", sas: await handoff.sas(a, h.pair.pub) };
-    const key = await handoff.open(h.pair, a, fromB64(r.wrapped));
-    if (!key) return { state: "mismatch" };
+    // Код вручную: ключ не сохраняется, пока здесь не нажали «Цифры совпадают».
+    if (!h.pinned && !h.confirmed) return { state: "compare", sas: h.sas ?? "", ready: true };
+    const key = h.key;
+    h.applied = true;
+    h.key = undefined;
     this.rememberAccountKey(key);
+    // Ключ здесь — обмен на сервере больше не нужен; не стёрся — истечёт сам.
+    void this.api()
+      .handoffDone()
+      .catch((e: unknown) => console.warn(`selfsync-cloud: handoff cleanup failed: ${e instanceof Error ? e.message : String(e)}`));
     // Обёртку сервер отдал один раз: ключ уже здесь, даже если vault не подключился
     // (лимит устройств, нет связи) — тогда выбрать vault заново.
     try {
@@ -584,9 +617,10 @@ export class Cloud {
     const viaQr = !!r.mac;
     if (viaQr && !(await handoff.macOk(h.secret, b, fromB64(r.mac ?? "")))) return { state: "mismatch", name: r.name };
     if (!confirmed) {
-      if (viaQr) return { state: "confirm", name: r.name, sas: null };
+      // Свой ключ раскрыть сразу: новое устройство покажет цифры (по коду — для
+      // сверки, по QR — для справки). Ключ аккаунта — только после согласия.
       await call({ pk: h.pair.pub });
-      return { state: "confirm", name: r.name, sas: await handoff.sas(h.pair.pub, b) };
+      return { state: "confirm", name: r.name, sas: viaQr ? null : await handoff.sas(h.pair.pub, b) };
     }
     const key = this.needAccountKey();
     h.wrapped ??= (await handoff.seal(h.pair, b, key)) ?? undefined;
@@ -638,9 +672,10 @@ export class Cloud {
     const server = this.s.server || this.server();
     const pair = await handoff.newPair();
     const token = this.s.session ? undefined : this.s.token;
-    const r = await this.api(server).accountCode(name, token ? "" : this.s.vault, token, await handoff.commitOf(pair.pub));
+    const commit = await handoff.commitOf(pair.pub);
+    const r = await this.api(server).accountCode(name, token ? "" : this.s.vault, token, commit);
     const h = { code: r.code, server, token, pair, secret: randomBytes(handoff.SECRET_LEN) };
-    const q = new URLSearchParams({ s: server, c: r.code, m: toB64(h.secret) });
+    const q = new URLSearchParams({ s: server, c: r.code, m: toB64(h.secret), h: toB64(handoff.pinOf(commit)) });
     if (this.s.vault) q.set("v", this.s.vault);
     return { code: r.code, expiresAt: r.expires_at, uri: `obsidian://${LOGIN_ACTION}?${q.toString()}`, handoff: h };
   }

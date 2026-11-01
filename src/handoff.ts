@@ -2,7 +2,8 @@
 // (docs/cloud-api.md сервера, «Передача ключа по коду»). Сервер видит только
 // открытые ключи, обязательство, MAC и обёртку:
 //
-//   источник:  пара a/A, commit = sha256(A) — в код; секрет m (16 байт) — в QR
+//   источник:  пара a/A, commit = sha256(A) — в код; секрет m (16 байт) и
+//              отпечаток h = commit[0..16] — в QR
 //   новое:     пара b/B, mac = HMAC-SHA256(m, B) — если код из QR
 //   оба:       цифры = u32be(sha256(метка ‖ " sas" ‖ A ‖ B)[0..4]) mod 10⁶
 //   ключ:      k = HKDF-SHA256(x(ECDH), salt = A ‖ B, info = метка ‖ " key")
@@ -70,6 +71,20 @@ export async function sha256(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<
 /** Обязательство источника: его открытый ключ до того, как он раскрыт. */
 export function commitOf(pub: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   return sha256(pub);
+}
+
+/** Отпечаток обязательства в QR (`h`): первые 16 байт. Обязательство новое
+ *  устройство получает от сервера — по отпечатку из QR оно видит, что сервер не
+ *  подменил его вместе с ключом источника. */
+export const PIN_LEN = 16;
+
+export function pinOf(commit: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
+  return commit.slice(0, PIN_LEN);
+}
+
+/** Обязательство от сервера начинается с отпечатка из QR (за постоянное время). */
+export function pinOk(commit: Uint8Array, pin: Uint8Array): boolean {
+  return commit.length === 32 && pin.length === PIN_LEN && equal(commit.subarray(0, PIN_LEN), pin);
 }
 
 /** Раскрытый ключ источника совпадает с обязательством из кода. */

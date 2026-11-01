@@ -143,7 +143,7 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
       // а сервер не выдаёт коды без обмена ключом.
       if (p.k) new Notice(t("link.oldLogin"), 0);
       else if (!this.cloud.trusted(p.s)) new Notice(t("code.untrusted", { server: p.s }), 0);
-      else new LoginCodeModal(this.app, this, { server: p.s, code: p.c, secret: p.m, vault: p.v }).open();
+      else new LoginCodeModal(this.app, this, { server: p.s, code: p.c, secret: p.m, pin: p.h, vault: p.v }).open();
     });
     // Приглашение в vault от плагина 0.1.x (пароль vault'а в ссылке) больше не работает.
     this.registerObsidianProtocolHandler(OLD_INVITE_ACTION, () => new Notice(t("link.oldInvite"), 0));

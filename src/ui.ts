@@ -528,8 +528,9 @@ export class InviteModal extends Modal {
   }
 }
 
-/** Новое устройство ждёт ключ аккаунта от источника. По коду вручную показывает
- *  цифры сверки; не дождались — пароль или фраза. */
+/** Новое устройство ждёт ключ аккаунта от источника. Цифры видны всегда; по коду
+ *  вручную (в ссылке нет отпечатка обязательства) ключ применяется только после
+ *  «Цифры совпадают» здесь. Не дождались или не совпали — пароль или фраза. */
 export class HandoffModal extends Modal {
   private alive = false;
 
@@ -550,16 +551,42 @@ export class HandoffModal extends Modal {
 
   private async wait(): Promise<void> {
     const { contentEl } = this;
-    const status = contentEl.createEl("p", { text: t(this.h.qr ? "handoff.waitQr" : "handoff.waitCode") });
+    const h = this.h;
+    const status = contentEl.createEl("p", { text: t(h.qr ? "handoff.waitQr" : "handoff.waitCode") });
     const digits = contentEl.createEl("p", { cls: "selfsync-cloud-sas" });
+    const answer = contentEl.createDiv();
     new Setting(contentEl).addButton((b) => b.setButtonText(t("handoff.fallback")).onClick(() => this.fallback()));
+    let stopped = false;
     const end = (text: string) => {
+      stopped = true;
       status.setText(text);
       status.addClass("mod-warning");
       digits.setText("");
+      answer.empty();
+    };
+    // Ответ на цифры — один раз: «совпадают» разрешает применить ключ, «не совпадают» его выбрасывает.
+    const ask = () => {
+      if (answer.childElementCount > 0) return;
+      new Setting(answer)
+        .addButton((b) =>
+          b.setButtonText(t("handoff.joinNoMatch")).onClick(() => {
+            h.key = undefined;
+            end(t("handoff.joinRejected"));
+          }),
+        )
+        .addButton((b) =>
+          b
+            .setButtonText(t("handoff.joinMatch"))
+            .setCta()
+            .onClick(() => {
+              h.confirmed = true;
+              answer.empty();
+              status.setText(t("handoff.waitSend"));
+            }),
+        );
     };
     const deadline = Date.now() + JOINER_MS;
-    while (this.alive && Date.now() < deadline) {
+    while (this.alive && !stopped && Date.now() < deadline) {
       try {
         const step = await this.plugin.cloud.joinerStep(this.h);
         if (!this.alive) return;
@@ -571,16 +598,22 @@ export class HandoffModal extends Modal {
         }
         if (step.state === "mismatch") return end(t("handoff.mismatch"));
         if (step.state === "gone") return end(t("handoff.gone"));
-        if (step.state === "compare") {
-          status.setText(t("handoff.compare"));
+        if (step.state === "compare" && !stopped) {
           digits.setText(sasText(step.sas));
+          if (h.pinned) status.setText(t("handoff.compareQr"));
+          else if (h.confirmed) status.setText(t("handoff.waitSend"));
+          else {
+            status.setText(t("handoff.compare"));
+            ask();
+          }
         }
       } catch (e) {
+        // Нет связи — спросить снова: сервер отдаёт обмен повторно до истечения.
         status.setText(errorText(e));
       }
       await sleep(POLL_MS);
     }
-    if (this.alive) end(t("handoff.timeout"));
+    if (this.alive && !stopped) end(t("handoff.timeout"));
   }
 
   /** Ключ иначе: пароль, если он есть у аккаунта, иначе фраза. */
@@ -605,7 +638,7 @@ export class LoginCodeModal extends Form {
   constructor(
     app: App,
     private plugin: SelfsyncCloudPlugin,
-    private fromQr?: { server: string; code: string; secret?: string; vault?: string },
+    private fromQr?: { server: string; code: string; secret?: string; pin?: string; vault?: string },
   ) {
     super(app);
     this.code = fromQr?.code ?? "";
@@ -633,7 +666,7 @@ export class LoginCodeModal extends Form {
     const server = this.fromQr?.server ?? cloud.server(this.regionId);
     if (!server) return t("account.notOpen");
     if (!this.fromQr) this.plugin.settings.region = this.regionId;
-    const r = await cloud.redeemAccount(server, this.code, { secret: this.fromQr?.secret, vault: this.fromQr?.vault });
+    const r = await cloud.redeemAccount(server, this.code, { secret: this.fromQr?.secret, pin: this.fromQr?.pin, vault: this.fromQr?.vault });
     if (r.handoff) {
       new HandoffModal(this.app, this.plugin, r.handoff, r.password).open();
       return null;
