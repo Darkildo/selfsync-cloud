@@ -225,13 +225,16 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     const cloud = this.cloudPlugin.cloud;
     if (this.s.vault) {
       const name = t("vault.connected", { label: this.s.vaultLabel || this.s.vault });
+      // Новому устройству ключ передаёт только устройство, на котором он есть.
+      const canInvite = cloud.accountKey() !== null;
+      const desc = canInvite ? t("vault.connectedDesc") : `${t("vault.connectedDesc")} ${t("invite.needKey")}`;
       return [
         {
           name,
-          desc: t("vault.connectedDesc"),
+          desc,
           build: (s: Setting) => {
-            s.setName(name).setDesc(t("vault.connectedDesc"));
-            s.addButton((b) => b.setButtonText(t("vault.invite")).onClick(() => new InviteModal(this.app, this.cloudPlugin).open()));
+            s.setName(name).setDesc(desc);
+            if (canInvite) s.addButton((b) => b.setButtonText(t("vault.invite")).onClick(() => new InviteModal(this.app, this.cloudPlugin).open()));
             s.addButton((b) =>
               b
                 .setButtonText(coreT("diag.button"))
