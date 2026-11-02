@@ -113,6 +113,12 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
     this.updatePhraseBar();
   }
 
+  /** Вкладка настроек дочитала аккаунт: перерисовать, но не перечитывать снова. */
+  accountLoaded(): void {
+    (this.settingTab as CloudSettingTab | undefined)?.refresh();
+    this.updatePhraseBar();
+  }
+
   override async start(): Promise<void> {
     this.triedAccountKey = false;
     await super.start();

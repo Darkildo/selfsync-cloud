@@ -34,6 +34,9 @@ export class CloudSettingTab extends SelfsyncSettingTab {
   private loading = false;
   /** Аккаунт не загрузился: текст ошибки (нет связи, регион не открыт). */
   private loadError = "";
+  /** Первая отрисованная строка вкладки. По ней видно, открыта ли вкладка: при отрисовке
+   *  через getSettingDefinitions (десктоп, Obsidian 1.13+) containerEl не в DOM. */
+  private shownEl: HTMLElement | null = null;
 
   constructor(
     app: App,
@@ -55,14 +58,24 @@ export class CloudSettingTab extends SelfsyncSettingTab {
       this.loading = false;
       this.loadedAt = Date.now();
       this.loadError = account.status === "rejected" ? errorText(account.reason) : "";
-      this.cloudPlugin.accountChanged();
+      // Только перерисовать: accountChanged() перечитал бы аккаунт снова, по кругу.
+      this.cloudPlugin.accountLoaded();
     });
+  }
+
+  private shown(): boolean {
+    return this.containerEl.isConnected || this.shownEl?.isConnected === true;
+  }
+
+  /** Перерисовать, если вкладка сейчас открыта. */
+  override refresh(): void {
+    if (this.shown()) this.update();
   }
 
   /** Перечитать аккаунт (после действий): сейчас, если вкладка открыта, иначе при открытии. */
   reload(): void {
     this.loadedAt = 0;
-    if (this.containerEl.isConnected) this.load();
+    if (this.shown()) this.load();
     this.refresh();
   }
 
@@ -72,7 +85,17 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     const keep = super
       .sections()
       .filter((s) => s.heading === coreT("settings.sync") || s.heading === coreT("configSync.heading"));
-    const out: Section[] = [{ heading: t("settings.account"), rows: this.accountRows() }];
+    const account = this.accountRows();
+    const first = account[0];
+    if (first)
+      account[0] = {
+        ...first,
+        build: (s: Setting) => {
+          this.shownEl = s.settingEl;
+          return first.build(s);
+        },
+      };
+    const out: Section[] = [{ heading: t("settings.account"), rows: account }];
     const vault = this.vaultRows();
     if (vault.length > 0) out.push({ heading: t("settings.vault"), rows: vault });
     if (this.cloudPlugin.cloud.account) {

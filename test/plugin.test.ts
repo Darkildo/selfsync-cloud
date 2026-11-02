@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import * as fsp from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import Module from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -193,3 +195,62 @@ test("main.js: ключа аккаунта на устройстве нет — 
     plugin.onunload();
   }
 });
+
+/** Сервис на localhost: считает запросы аккаунта, отвечает данными аккаунта #7. */
+async function fakeService(): Promise<{ url: string; account: () => number; close: () => void }> {
+  let account = 0;
+  const tariff = { id: 1, code: "free", title: "Free", price: "0", status: "active", vaults: 1, bytes_soft: 0, bytes_hard: 1 << 30, devices: 3, max_file: 1 << 20 };
+  const view = {
+    id: 7, email: "a@example.com", created_at: 0, tariff, usage: { bytes: 0, vaults: 0, devices: 0 },
+    vaults: [], devices: [], sessions: [], has_password: true, has_key_auth: false,
+    phrase_version: 1, phrase_confirmed: true, terms_version: "", recovery_wrapped: "", kdf: null, salt: null, wrapped_key: null,
+  };
+  const server = createServer((req, res) => {
+    if (req.url === "/cloud/v1/account") {
+      account++;
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(view));
+      return;
+    }
+    res.writeHead(503).end();
+  });
+  await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, account: () => account, close: () => server.close() };
+}
+
+/** Вкладка открыта: строки «в DOM», `update()` рисует заново. `containerEl` в DOM только
+ *  при старой отрисовке и на телефоне; на десктопе 1.13+ его там нет. */
+async function settingsOpen(containerInDom: boolean): Promise<void> {
+  const svc = await fakeService();
+  const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  try {
+    let updates = 0;
+    let rows: obsidian.Setting[] = [];
+    const draw = (): void => {
+      obsidian.settings.length = 0;
+      for (const g of plugin.settingTab.getSettingDefinitions())
+        for (const it of g.items) it.render(Object.assign(new obsidian.Setting(), { settingEl: { ...new obsidian.Setting().settingEl, isConnected: true } }));
+      rows = obsidian.settings.filter((s) => !s.hidden && s.name !== "");
+    };
+    const tab = plugin.settingTab as unknown as { containerEl: { isConnected?: boolean }; update: () => void };
+    tab.containerEl.isConnected = containerInDom;
+    tab.update = () => {
+      updates++;
+      draw();
+    };
+    draw();
+    assert.equal(rows.find((r) => r.name === "a@example.com")?.desc, "Загружаю аккаунт…");
+    for (let i = 0; i < 100 && updates === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    // Дочитанный аккаунт виден сразу, без закрытия настроек.
+    assert.ok(updates > 0, "вкладка не перерисована");
+    assert.match(rows.find((r) => r.name === "a@example.com")?.desc ?? "", /Free/);
+    // Перерисовка не запускает новую загрузку: один запрос, а не цикл.
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(svc.account(), 1);
+  } finally {
+    plugin.onunload();
+    svc.close();
+  }
+}
+
+test("main.js: аккаунт дочитан — вкладка перерисована один раз (десктоп 1.13+)", () => settingsOpen(false));
+test("main.js: аккаунт дочитан — без цикла загрузок (телефон, старая отрисовка)", () => settingsOpen(true));
