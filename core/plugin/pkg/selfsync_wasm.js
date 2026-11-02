@@ -176,6 +176,256 @@ export function clientOlderThan(client, min) {
 }
 
 /**
+ * `h` для QR: первые 16 байт обязательства.
+ * @param {Uint8Array} commit
+ * @returns {Uint8Array}
+ */
+export function handoffCheck(commit) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(commit, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.handoffCheck(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Обязательство от сервера совпадает с `h` из QR (за постоянное время).
+ * @param {Uint8Array} check
+ * @param {Uint8Array} commit
+ * @returns {boolean}
+ */
+export function handoffCheckMatches(check, commit) {
+    const ptr0 = passArray8ToWasm0(check, wasm.__wbindgen_export);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(commit, wasm.__wbindgen_export);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.handoffCheckMatches(ptr0, len0, ptr1, len1);
+    return ret !== 0;
+}
+
+/**
+ * `sha256(A)`.
+ * @param {Uint8Array} _public
+ * @returns {Uint8Array}
+ */
+export function handoffCommit(_public) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(_public, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.handoffCommit(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Новая пара ключей обмена: секрет (32 байта).
+ * @returns {Uint8Array}
+ */
+export function handoffGenerate() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.handoffGenerate(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v1 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `HMAC-SHA256(секрет из QR, B)`.
+ * @param {Uint8Array} link_secret
+ * @param {Uint8Array} _public
+ * @returns {Uint8Array}
+ */
+export function handoffMac(link_secret, _public) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(link_secret, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(_public, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.handoffMac(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Минорная версия протокола, с которой сервер умеет передачу ключа по коду.
+ * @returns {number}
+ */
+export function handoffMinor() {
+    const ret = wasm.handoffMinor();
+    return ret >>> 0;
+}
+
+/**
+ * Открытый ключ пары (несжатая точка, 65 байт).
+ * @param {Uint8Array} secret
+ * @returns {Uint8Array}
+ */
+export function handoffPublic(secret) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(secret, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.handoffPublic(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Шесть цифр для сверки (`a` — ключ источника, `b` — нового устройства).
+ * @param {string} prefix
+ * @param {Uint8Array} a
+ * @param {Uint8Array} b
+ * @returns {string}
+ */
+export function handoffSas(prefix, a, b) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(a, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(b, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.handoffSas(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred4_0 = r0;
+        deferred4_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Новое устройство: открыть обёртку ключом источника `source`.
+ * @param {string} prefix
+ * @param {Uint8Array} joiner_secret
+ * @param {Uint8Array} source
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function handoffUnwrap(prefix, joiner_secret, source, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(joiner_secret, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(source, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.handoffUnwrap(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * @param {Uint8Array} _public
+ * @returns {boolean}
+ */
+export function handoffValidPublic(_public) {
+    const ptr0 = passArray8ToWasm0(_public, wasm.__wbindgen_export);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.handoffValidPublic(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * Источник: обёртка `payload` для нового устройства с ключом `joiner`.
+ * @param {string} prefix
+ * @param {Uint8Array} source_secret
+ * @param {Uint8Array} joiner
+ * @param {Uint8Array} payload
+ * @returns {Uint8Array}
+ */
+export function handoffWrap(prefix, source_secret, joiner, payload) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(source_secret, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(joiner, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(payload, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.handoffWrap(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Нормализованный путь vault'а (NFC, без лишних `/`) или `undefined`, если путь
  * не синхронизируется.
  * @param {string} path

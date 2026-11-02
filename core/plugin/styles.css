@@ -4,6 +4,33 @@
   margin: 0 auto 1em;
 }
 
+/* Цифры для сверки при передаче ключа по коду. */
+.selfsync-sas {
+  font-family: var(--font-monospace);
+  font-size: 2em;
+  letter-spacing: 0.15em;
+  text-align: center;
+  margin: 0.5em 0;
+}
+
+/* Цифры для сверки, фраза, адреса, коды и пути читаются слева направо и в арабском,
+   иврите, фарси, урду. Параметры внутри строк изолирует t() (U+2068…U+2069). */
+.selfsync-sas,
+.selfsync-phrase,
+.selfsync-phrase-input,
+.selfsync-ltr,
+.selfsync-ltr-name .setting-item-name {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* Телефон: кнопки строки переносятся, а не уходят за край экрана. На десктопе
+   раскладка Obsidian как есть: перенос там сжимал бы кнопки рядом с длинным описанием. */
+.is-mobile .selfsync-actions .setting-item-control {
+  flex-wrap: wrap;
+  row-gap: var(--size-4-2);
+}
+
 .selfsync-device-revoked .setting-item-name {
   text-decoration: line-through;
   opacity: 0.6;
@@ -29,4 +56,47 @@
 .selfsync-phrase-input {
   width: 100%;
   font-family: var(--font-monospace);
+}
+
+/* Статус-бар: фирменное кольцо + текст. Цветом выделяется только иконка. */
+.selfsync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.selfsync-status-icon {
+  display: inline-flex;
+  --icon-size: var(--icon-s);
+  color: var(--text-faint);
+}
+
+.selfsync-status[data-state="idle"] .selfsync-status-icon,
+.selfsync-status[data-state="syncing"] .selfsync-status-icon {
+  color: var(--text-accent);
+}
+
+.selfsync-status[data-state="readOnly"] .selfsync-status-icon {
+  color: var(--text-muted);
+}
+
+.selfsync-status[data-state="needPassword"] .selfsync-status-icon {
+  color: var(--text-warning);
+}
+
+.selfsync-status[data-state="error"] .selfsync-status-icon,
+.selfsync-status[data-state="blocked"] .selfsync-status-icon {
+  color: var(--text-error);
+}
+
+@keyframes selfsync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .selfsync-status[data-state="syncing"] .selfsync-status-icon svg {
+    animation: selfsync-spin 1.6s linear infinite;
+  }
 }
