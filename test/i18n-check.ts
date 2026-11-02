@@ -6,7 +6,7 @@ import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { lintDict } from "../core/plugin/src/i18n/lint.ts";
+import { lintDict } from "../core/plugin/src/ext-pure.ts";
 import { en } from "../src/i18n/en.ts";
 import { LOCALES } from "../src/i18n/locales.ts";
 

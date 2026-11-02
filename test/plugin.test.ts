@@ -63,6 +63,13 @@ function render(plugin: LoadedPlugin): { headings: string[]; rows: obsidian.Sett
   return { headings: groups.map((g) => g.heading), rows: obsidian.settings.filter((s) => !s.hidden) };
 }
 
+test("main.js: WASM и переводы сжаты — сборка заметно меньше сырого WASM с 140 словарями", () => {
+  const wasm = readFileSync(join(ROOT, "core/plugin/pkg/selfsync_wasm_bg.wasm")).length;
+  const size = readFileSync(MAIN).length;
+  // Без сжатия: WASM в base64 (×1,33) плюс ~3,3 МБ словарей — больше 5 МБ.
+  assert.ok(size < wasm * 2, `main.js ${size} байт, WASM ${wasm}`);
+});
+
 test("main.js: ядро из core/, шифрование обязательно, свои команды", async () => {
   const plugin = await load(null);
   try {

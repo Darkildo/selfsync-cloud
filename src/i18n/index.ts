@@ -1,10 +1,10 @@
 // Строки облачной части плагина. Язык — как у Obsidian (getLanguage()), выбор —
 // как в ядре: точный код, затем базовый язык, иначе en; нет строки в переводе —
-// английская. Общие окна и уведомления переводит ядро (core/plugin/src/i18n.ts),
+// английская. Общие окна и уведомления переводит ядро (core/plugin/src/i18n/),
 // язык у обоих выставляется вместе (setLanguage).
 
-// Не через ext.ts: модуль грузится и вне Obsidian (тесты, Node), а ext.ts тянет main.ts → obsidian.
-import { setLanguage as setCoreLanguage } from "../../core/plugin/src/i18n.ts";
+// ext-pure.ts, а не ext.ts: модуль грузится и вне Obsidian (тесты, Node), а ext.ts тянет main.ts → obsidian.
+import { setLanguage as setCoreLanguage } from "../../core/plugin/src/ext-pure.ts";
 import { type Dict, en, type Key } from "./en.ts";
 import { LOCALES } from "./locales.ts";
 
