@@ -32,6 +32,8 @@ export function tariffLimits(x: TariffView): string {
 export class CloudSettingTab extends SelfsyncSettingTab {
   private loadedAt = 0;
   private loading = false;
+  /** Пересчёт строк уже запрошен (refresh). */
+  private queued = false;
   /** Аккаунт не загрузился: текст ошибки (нет связи, регион не открыт). */
   private loadError = "";
 
@@ -60,20 +62,46 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     });
   }
 
-  /** Перечитать аккаунт (после действий): сейчас, если вкладка открыта (перерисовка
-   *  начинается с sections(), а там load()), иначе при открытии. */
+  /** Перечитать аккаунт (после действий): сразу, открыты настройки или нет. */
   reload(): void {
     this.loadedAt = 0;
     this.refresh();
   }
 
+  /**
+   * Пересчитать строки. Obsidian 1.13+ при открытии вкладки рисует строки, сохранённые
+   * последним update(), а сам update() перерисовывает только открытую вкладку. Поэтому
+   * update() — всегда, не только когда вкладка видна, иначе откроется устаревшее
+   * «Загружаю аккаунт…». Несколько событий подряд — один пересчёт.
+   */
+  override refresh(): void {
+    if (this.queued) return;
+    this.queued = true;
+    queueMicrotask(() => {
+      this.queued = false;
+      this.update();
+    });
+  }
+
   protected override sections(): Section[] {
-    // Обе отрисовки (display и getSettingDefinitions) начинаются здесь.
-    this.load();
+    // Первая загрузка — с первым update() (addSettingTab) и после reload(). Дальше
+    // свежесть проверяет отрисовка строки аккаунта: она идёт при каждом открытии
+    // вкладки, а update() по событиям синка при закрытых настройках сеть не трогает.
+    if (this.loadedAt === 0) this.load();
     const keep = super
       .sections()
       .filter((s) => s.heading === coreT("settings.sync") || s.heading === coreT("configSync.heading"));
-    const account = this.accountRows();
+    const account = this.accountRows().map((r, i) =>
+      i === 0
+        ? {
+            ...r,
+            build: (s: Setting) => {
+              this.load();
+              return r.build(s);
+            },
+          }
+        : r,
+    );
     const out: Section[] = [{ heading: t("settings.account"), rows: account }];
     const vault = this.vaultRows();
     if (vault.length > 0) out.push({ heading: t("settings.vault"), rows: vault });

@@ -217,40 +217,116 @@ async function fakeService(): Promise<{ url: string; account: () => number; clos
   return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, account: () => account, close: () => server.close() };
 }
 
-/** Вкладка открыта: строки «в DOM», `update()` рисует заново. `containerEl` в DOM только
- *  при старой отрисовке и на телефоне; на десктопе 1.13+ его там нет. */
-async function settingsOpen(containerInDom: boolean): Promise<void> {
+/**
+ * Вкладка настроек так, как её ведёт Obsidian 1.13+ (по app.js 1.14.4):
+ * - addSettingTab() вызывает update();
+ * - update() сохраняет getSettingDefinitions() и перерисовывает, только если вкладка открыта;
+ * - открытие вкладки рисует сохранённые строки, getSettingDefinitions() не зовёт.
+ */
+function obsidianTabs(): { open(): obsidian.Setting[]; close(): void; rows(): obsidian.Setting[]; restore(): void } {
+  type Tab = { getSettingDefinitions(): { items: { render(s: unknown): unknown }[] }[]; settingItems?: { items: { render(s: unknown): unknown }[] }[] };
+  const P = obsidian.PluginSettingTab.prototype as unknown as { update(this: Tab): void };
+  const A = obsidian.Plugin.prototype as unknown as { addSettingTab(this: unknown, tab: Tab): void };
+  const update = P.update;
+  const add = A.addSettingTab;
+  let active: Tab | undefined;
+  let tab: Tab | undefined;
+  let shown: obsidian.Setting[] = [];
+  const renderTab = (t: Tab): void => {
+    for (const r of shown) r.settingEl.isConnected = false;
+    obsidian.settings.length = 0;
+    for (const g of t.settingItems ?? []) for (const it of g.items) it.render(new obsidian.Setting());
+    shown = [...obsidian.settings];
+  };
+  P.update = function () {
+    this.settingItems = this.getSettingDefinitions();
+    if (active === this) renderTab(this);
+  };
+  A.addSettingTab = function (t) {
+    add.call(this, t);
+    tab = t;
+    t.settingItems = t.getSettingDefinitions();
+  };
+  const rows = (): obsidian.Setting[] => shown.filter((s) => !s.hidden && s.name !== "");
+  return {
+    open: () => {
+      active = tab;
+      if (tab) renderTab(tab);
+      return rows();
+    },
+    close: () => {
+      active = undefined;
+      for (const r of shown) r.settingEl.isConnected = false;
+    },
+    rows,
+    restore: () => {
+      P.update = update;
+      A.addSettingTab = add;
+    },
+  };
+}
+
+const waitFor = async (ok: () => boolean): Promise<void> => {
+  for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 10));
+};
+const accountDesc = (rows: obsidian.Setting[]): string => rows.find((r) => r.name === "a@example.com")?.desc ?? "";
+
+test("main.js: аккаунт дочитан при закрытых настройках — при открытии виден тариф", async () => {
   const svc = await fakeService();
+  const tabs = obsidianTabs();
   const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
   try {
-    let updates = 0;
-    let rows: obsidian.Setting[] = [];
-    const draw = (): void => {
-      obsidian.settings.length = 0;
-      for (const g of plugin.settingTab.getSettingDefinitions())
-        for (const it of g.items) it.render(Object.assign(new obsidian.Setting(), { settingEl: { ...new obsidian.Setting().settingEl, isConnected: true } }));
-      rows = obsidian.settings.filter((s) => !s.hidden && s.name !== "");
-    };
-    const tab = plugin.settingTab as unknown as { containerEl: { isConnected?: boolean }; update: () => void };
-    tab.containerEl.isConnected = containerInDom;
-    tab.update = () => {
-      updates++;
-      draw();
-    };
-    draw();
-    assert.equal(rows.find((r) => r.name === "a@example.com")?.desc, "Загружаю аккаунт…");
-    for (let i = 0; i < 100 && updates === 0; i++) await new Promise((r) => setTimeout(r, 10));
-    // Дочитанный аккаунт виден сразу, без закрытия настроек.
-    assert.ok(updates > 0, "вкладка не перерисована");
-    assert.match(rows.find((r) => r.name === "a@example.com")?.desc ?? "", /Free/);
+    await waitFor(() => svc.account() === 1);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.match(accountDesc(tabs.open()), /Free/);
+    assert.equal(svc.account(), 1);
+  } finally {
+    tabs.restore();
+    plugin.onunload();
+    svc.close();
+  }
+});
+
+test("main.js: настройки открыты во время загрузки — перерисованы, ровно один /account", async () => {
+  const svc = await fakeService();
+  const tabs = obsidianTabs();
+  const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  try {
+    assert.equal(accountDesc(tabs.open()), "Загружаю аккаунт…");
+    await waitFor(() => /Free/.test(accountDesc(tabs.rows())));
+    assert.match(accountDesc(tabs.rows()), /Free/);
     // Перерисовка не запускает новую загрузку: один запрос, а не цикл.
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(svc.account(), 1);
   } finally {
+    tabs.restore();
     plugin.onunload();
     svc.close();
   }
-}
+});
 
-test("main.js: аккаунт дочитан — вкладка перерисована один раз (десктоп 1.13+)", () => settingsOpen(false));
-test("main.js: аккаунт дочитан — без цикла загрузок (телефон, старая отрисовка)", () => settingsOpen(true));
+test("main.js: данные устарели — открытие вкладки перечитывает аккаунт, события синка — нет", async () => {
+  const svc = await fakeService();
+  const tabs = obsidianTabs();
+  const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  try {
+    await waitFor(() => svc.account() === 1);
+    await new Promise((r) => setTimeout(r, 50));
+    const tab = plugin.settingTab as unknown as { loadedAt: number; refresh(): void };
+    tab.loadedAt = 1;
+    // Настройки закрыты: перерисовка по событию сеть не трогает.
+    tab.refresh();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(svc.account(), 1);
+    tabs.open();
+    await waitFor(() => svc.account() === 2);
+    assert.equal(svc.account(), 2);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.match(accountDesc(tabs.rows()), /Free/);
+    tabs.close();
+  } finally {
+    tabs.restore();
+    plugin.onunload();
+    svc.close();
+  }
+});
