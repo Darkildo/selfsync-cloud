@@ -41,6 +41,58 @@ export function checkPhrase(phrase: string): string | undefined;
 export function clientOlderThan(client: string, min: string): boolean;
 
 /**
+ * `h` для QR: первые 16 байт обязательства.
+ */
+export function handoffCheck(commit: Uint8Array): Uint8Array;
+
+/**
+ * Обязательство от сервера совпадает с `h` из QR (за постоянное время).
+ */
+export function handoffCheckMatches(check: Uint8Array, commit: Uint8Array): boolean;
+
+/**
+ * `sha256(A)`.
+ */
+export function handoffCommit(_public: Uint8Array): Uint8Array;
+
+/**
+ * Новая пара ключей обмена: секрет (32 байта).
+ */
+export function handoffGenerate(): Uint8Array;
+
+/**
+ * `HMAC-SHA256(секрет из QR, B)`.
+ */
+export function handoffMac(link_secret: Uint8Array, _public: Uint8Array): Uint8Array;
+
+/**
+ * Минорная версия протокола, с которой сервер умеет передачу ключа по коду.
+ */
+export function handoffMinor(): number;
+
+/**
+ * Открытый ключ пары (несжатая точка, 65 байт).
+ */
+export function handoffPublic(secret: Uint8Array): Uint8Array;
+
+/**
+ * Шесть цифр для сверки (`a` — ключ источника, `b` — нового устройства).
+ */
+export function handoffSas(prefix: string, a: Uint8Array, b: Uint8Array): string;
+
+/**
+ * Новое устройство: открыть обёртку ключом источника `source`.
+ */
+export function handoffUnwrap(prefix: string, joiner_secret: Uint8Array, source: Uint8Array, wrapped: Uint8Array): Uint8Array;
+
+export function handoffValidPublic(_public: Uint8Array): boolean;
+
+/**
+ * Источник: обёртка `payload` для нового устройства с ключом `joiner`.
+ */
+export function handoffWrap(prefix: string, source_secret: Uint8Array, joiner: Uint8Array, payload: Uint8Array): Uint8Array;
+
+/**
  * Нормализованный путь vault'а (NFC, без лишних `/`) или `undefined`, если путь
  * не синхронизируется.
  */
@@ -92,6 +144,17 @@ export interface InitOutput {
     readonly argon2id: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly checkPhrase: (a: number, b: number, c: number) => void;
     readonly clientOlderThan: (a: number, b: number, c: number, d: number) => number;
+    readonly handoffCheck: (a: number, b: number, c: number) => void;
+    readonly handoffCheckMatches: (a: number, b: number, c: number, d: number) => number;
+    readonly handoffCommit: (a: number, b: number, c: number) => void;
+    readonly handoffGenerate: (a: number) => void;
+    readonly handoffMac: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly handoffMinor: () => number;
+    readonly handoffPublic: (a: number, b: number, c: number) => void;
+    readonly handoffSas: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly handoffUnwrap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly handoffValidPublic: (a: number, b: number) => number;
+    readonly handoffWrap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly normalizePath: (a: number, b: number, c: number) => void;
     readonly passwordStrength: (a: number, b: number) => number;
     readonly phraseDecode: (a: number, b: number, c: number) => void;

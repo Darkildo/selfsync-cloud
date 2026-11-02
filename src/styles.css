@@ -29,15 +29,10 @@
   user-select: text;
 }
 
-/* Несколько кнопок в одной строке настроек: на узком экране переносятся, а не уезжают за край.
-   Класс общий с ядром selfsync: когда правило придёт в core/plugin/styles.css, этот дубль убрать. */
-.selfsync-actions .setting-item-control {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--size-4-2);
-}
-
-/* На телефоне Obsidian ставит управление под описанием, у левого края. */
-.is-phone .selfsync-actions .setting-item-control {
-  justify-content: flex-start;
+/* Фраза, цифры сверки и коды читаются слева направо и в арабском, иврите, фарси, урду.
+   Параметры внутри строк изолирует t() (U+2068…U+2069). */
+.selfsync-cloud-phrase,
+.selfsync-cloud-sas {
+  direction: ltr;
+  unicode-bidi: isolate;
 }

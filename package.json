@@ -1,6 +1,6 @@
 {
   "name": "selfsync-cloud",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Плагин Obsidian для облачной синхронизации Selfsync Cloud",
   "private": true,
   "license": "PolyForm-Shield-1.0.0",
@@ -11,7 +11,8 @@
     "dev": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "i18n:check": "node --import tsx test/i18n-check.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

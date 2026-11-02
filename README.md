@@ -26,6 +26,10 @@ The key is passed only between devices that both run 0.3.0 or later: update the 
 
 **Day to day.** Sync runs by itself. Conflicting edits are merged or kept as conflict copies; deleted files and older versions are in the file history and the trash, as in selfsync. The settings show your storage use, the account’s sign-ins and devices (any of them can be revoked) and the plans. You can sign out or delete the account with all its data there too.
 
+## Languages
+
+The plugin follows the language of the Obsidian app and is translated into every language Obsidian offers. English and Russian are written by the authors; the other translations are **machine translations** and have not been reviewed by native speakers yet. Corrections are welcome as pull requests: the cloud screens are in `src/i18n/<code>.ts` (see [src/i18n/TRANSLATING.md](src/i18n/TRANSLATING.md)), the shared sync windows come from selfsync and are translated there. A string missing in a translation is shown in English.
+
 ## Disclosures
 
 - **Account required.** It is created with one press inside the plugin, without an email or a password; you can add them later. Pressing Start accepts the terms of service.

@@ -9,7 +9,7 @@ import { type Row, type Section, SelfsyncSettingTab } from "../core/plugin/src/s
 import { confirm } from "../core/plugin/src/ui/confirm.ts";
 import { DiagnoseModal } from "../core/plugin/src/ui/diagnose.ts";
 import type { TariffView } from "./api.ts";
-import { errorText, t } from "./i18n.ts";
+import { errorText, formatDateTime, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
 import { actions, ChangePasswordModal, EmailPasswordModal, ExistingModal, InviteModal, PasswordPromptModal, StartModal, VaultModal } from "./ui.ts";
 
@@ -34,9 +34,6 @@ export class CloudSettingTab extends SelfsyncSettingTab {
   private loading = false;
   /** Аккаунт не загрузился: текст ошибки (нет связи, регион не открыт). */
   private loadError = "";
-  /** Первая отрисованная строка вкладки. По ней видно, открыта ли вкладка: при отрисовке
-   *  через getSettingDefinitions (десктоп, Obsidian 1.13+) containerEl не в DOM. */
-  private shownEl: HTMLElement | null = null;
 
   constructor(
     app: App,
@@ -63,19 +60,10 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     });
   }
 
-  private shown(): boolean {
-    return this.containerEl.isConnected || this.shownEl?.isConnected === true;
-  }
-
-  /** Перерисовать, если вкладка сейчас открыта. */
-  override refresh(): void {
-    if (this.shown()) this.update();
-  }
-
-  /** Перечитать аккаунт (после действий): сейчас, если вкладка открыта, иначе при открытии. */
+  /** Перечитать аккаунт (после действий): сейчас, если вкладка открыта (перерисовка
+   *  начинается с sections(), а там load()), иначе при открытии. */
   reload(): void {
     this.loadedAt = 0;
-    if (this.shown()) this.load();
     this.refresh();
   }
 
@@ -86,15 +74,6 @@ export class CloudSettingTab extends SelfsyncSettingTab {
       .sections()
       .filter((s) => s.heading === coreT("settings.sync") || s.heading === coreT("configSync.heading"));
     const account = this.accountRows();
-    const first = account[0];
-    if (first)
-      account[0] = {
-        ...first,
-        build: (s: Setting) => {
-          this.shownEl = s.settingEl;
-          return first.build(s);
-        },
-      };
     const out: Section[] = [{ heading: t("settings.account"), rows: account }];
     const vault = this.vaultRows();
     if (vault.length > 0) out.push({ heading: t("settings.vault"), rows: vault });
@@ -210,14 +189,15 @@ export class CloudSettingTab extends SelfsyncSettingTab {
       desc: t("account.serviceDesc"),
       build: (s: Setting) => {
         s.setName(t("account.service")).setDesc(t("account.serviceDesc"));
-        s.addText((x) =>
+        s.addText((x) => {
+          x.inputEl.dir = "ltr";
           x
             .setValue(this.s.serviceUrl)
             .onChange(async (v) => {
               this.s.serviceUrl = v.trim();
               await this.cloudPlugin.saveSettings();
-            }),
-        );
+            });
+        });
       },
     });
     return rows;
@@ -310,7 +290,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     if (!a) return [];
     const rows: Row[] = a.sessions.map((x) => {
       const name = x.current ? t("devices.current", { name: x.name }) : x.name;
-      const time = x.last_seen ? t("sessions.lastSeen", { time: new Date(x.last_seen).toLocaleString() }) : "";
+      const time = x.last_seen ? t("sessions.lastSeen", { time: formatDateTime(x.last_seen) }) : "";
       const desc = [x.client, time].filter(Boolean).join(" · ");
       return {
         name,
@@ -357,7 +337,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     if (!a || a.devices.length === 0) return [{ name: "", build: (s: Setting) => s.setDesc(t("devices.none")) }];
     const label = (vault: string) => a.vaults.find((v) => v.name === vault)?.label ?? vault;
     return a.devices.map((d) => {
-      const desc = t("devices.lastSeen", { vault: label(d.vault), time: d.last_seen ? new Date(d.last_seen).toLocaleString() : "—" });
+      const desc = t("devices.lastSeen", { vault: label(d.vault), time: d.last_seen ? formatDateTime(d.last_seen) : "—" });
       // Это устройство отключают в разделе vault'а: там ещё забываются ключи.
       const current = this.s.deviceId !== 0 && d.id === this.s.deviceId;
       const name = current ? t("devices.current", { name: d.name }) : d.name;

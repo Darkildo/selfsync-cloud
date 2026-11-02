@@ -30,7 +30,18 @@ export const Platform = {
   isAndroidApp: false,
 };
 
+export const icons = new Map<string, string>();
+export function addIcon(id: string, svg: string): void {
+  icons.set(id, svg);
+}
+export function setIcon(el: El, id: string): void {
+  el.attrs["icon"] = id;
+}
+
 export const moment = { locale: () => "ru" };
+export function getLanguage(): string {
+  return "ru";
+}
 
 /** Заголовки, которые «сервер» не прислал (изобразить сервер 0.1.x). */
 export const hiddenResponseHeaders = new Set<string>();
@@ -67,11 +78,21 @@ export class FileSystemAdapter {
 }
 
 class El {
-  text = "";
+  own = "";
   attrs: Record<string, string> = {};
+  children: El[] = [];
+  /** Текст элемента вместе с дочерними — как textContent. */
+  get text(): string {
+    return this.own + this.children.map((c) => c.text).join("");
+  }
   addClass(): void {}
+  createSpan(): El {
+    const c = new El();
+    this.children.push(c);
+    return c;
+  }
   setText(t: string): void {
-    this.text = t;
+    this.own = t;
   }
   setAttribute(k: string, v: string): void {
     this.attrs[k] = v;
@@ -114,13 +135,19 @@ export class Plugin {
 
 export class PluginSettingTab {
   containerEl = new El();
+  /** Сколько раз вкладка просила Obsidian перерисовать её. */
+  updates = 0;
   constructor(
     public app: unknown,
     public plugin: unknown,
   ) {}
+  update(): void {
+    this.updates++;
+  }
 }
 
 export class Modal {
+  modalEl = new El();
   contentEl = new El();
   constructor(public app: unknown) {}
   open(): void {}
@@ -170,6 +197,8 @@ export class Setting {
   toggles = 0;
   hidden = false;
   settingEl = {
+    /** Строка на экране: так её видит refresh() вкладки. */
+    isConnected: true,
     hide: (): void => {
       this.hidden = true;
     },
