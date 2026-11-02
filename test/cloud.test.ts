@@ -43,6 +43,8 @@ interface Fake {
   restarts: number;
   /** Сколько раз перерисовывались бы настройки. */
   changes: number;
+  /** Для каждой перерисовки: аккаунт уже свежий (`fresh`), перечитывать не нужно. */
+  fresh: boolean[];
 }
 
 type Command = (c: { type: string }) => Promise<Record<string, unknown>>;
@@ -75,6 +77,7 @@ function fake(settings: FakeSettings = {}, routes: Record<string, Route> = {}, c
     sent,
     restarts: 0,
     changes: 0,
+    fresh: [] as boolean[],
   };
   const plugin = {
     settings: f.settings,
@@ -92,8 +95,9 @@ function fake(settings: FakeSettings = {}, routes: Record<string, Route> = {}, c
       return Promise.resolve();
     },
     forgetVault: () => Promise.resolve(),
-    accountChanged: () => {
+    accountChanged: (o: { fresh?: boolean } = {}) => {
       f.changes++;
+      f.fresh.push(!!o.fresh);
     },
   };
   const http: Transport = async (req) => {
@@ -926,4 +930,84 @@ test("отказ на источнике: сессию подключившег�
   src.settings.session = "cs_a";
   srv.owner["DELETE /sessions/41"] = () => ({ status: 403, json: { code: "forbidden" } });
   assert.equal(await src.cloud.closeHandoffSession(inv.handoff), false);
+});
+
+test("ответ /account после выхода или входа в другой аккаунт не записывается", async () => {
+  // Медленный /account: пока он идёт, на устройстве вышли и вошли в аккаунт #8.
+  let release: (() => void) | undefined;
+  const slow = new Promise<void>((r) => (release = r));
+  const f = fake({ session: "cs_old", accountId: 7 }, {
+    "GET /account": async () => {
+      await slow;
+      return { json: anonAccount({ id: 7 }) };
+    },
+    "POST /logout": () => ({ json: null }),
+  });
+  const pending = f.cloud.refreshAccount();
+  await f.cloud.logout();
+  assert.equal(f.cloud.account, null);
+  release?.();
+  await pending;
+  // Вышли — ответ для прежней сессии не возвращает аккаунт на экран.
+  assert.equal(f.cloud.account, null);
+  assert.equal(f.settings.session, "");
+
+  let release2: (() => void) | undefined;
+  const slow2 = new Promise<void>((r) => (release2 = r));
+  const g = fake({ session: "cs_old", accountId: 7 }, {
+    "GET /account": async (_b, auth) => {
+      if (auth === "Bearer cs_old") {
+        await slow2;
+        return { json: anonAccount({ id: 7 }) };
+      }
+      return { json: anonAccount({ id: 8 }) };
+    },
+  });
+  const old = g.cloud.refreshAccount();
+  // Вошли в аккаунт #8 (как после входа фразой): сессия и аккаунт другие.
+  g.settings.session = "cs_new";
+  await g.cloud.refreshAccount();
+  assert.equal(g.cloud.account?.id, 8);
+  release2?.();
+  await old;
+  assert.equal(g.cloud.account?.id, 8);
+  assert.equal(g.settings.accountId, 8);
+});
+
+test("ответ, начатый раньше уже записанного, устарел и не затирает его", async () => {
+  let n = 0;
+  let release: (() => void) | undefined;
+  const slow = new Promise<void>((r) => (release = r));
+  const f = fake({ session: "cs_x" }, {
+    "GET /account": async () => {
+      const mine = ++n;
+      if (mine === 1) await slow;
+      return { json: anonAccount({ usage: { bytes: mine, vaults: 0, devices: 0 } }) };
+    },
+  });
+  const first = f.cloud.refreshAccount();
+  await f.cloud.refreshAccount();
+  assert.equal(f.cloud.account?.usage.bytes, 2);
+  release?.();
+  await first;
+  assert.equal(f.cloud.account?.usage.bytes, 2);
+});
+
+test("после действия аккаунт перечитывается один раз: настройки получают его свежим", async () => {
+  const f = fake({ session: "cs_x" }, {
+    "DELETE /sessions/3": () => ({ json: null }),
+    "POST /logout/all": () => ({ json: null }),
+    "DELETE /devices/4": () => ({ json: null }),
+    "GET /account": () => ({ json: anonAccount() }),
+  });
+  await f.cloud.revokeSession(3);
+  await f.cloud.logoutAll();
+  await f.cloud.revokeDevice(4);
+  assert.deepEqual(f.calls, ["DELETE /sessions/3", "GET /account", "POST /logout/all", "GET /account", "DELETE /devices/4", "GET /account"]);
+  // Перерисовка без повторного чтения.
+  assert.deepEqual(f.fresh, [true, true, true]);
+  // Не перечитался (нет связи): действие удалось, настройки перечитают сами.
+  const g = fake({ session: "cs_x" }, { "DELETE /sessions/3": () => ({ json: null }) });
+  await g.cloud.revokeSession(3);
+  assert.deepEqual(g.fresh, [false]);
 });
