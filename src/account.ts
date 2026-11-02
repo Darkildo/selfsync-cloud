@@ -10,6 +10,7 @@
 // Фраза восстановления — 24 слова BIP39 (как у vault'а в selfsync): из её энтропии
 // HKDF даёт ключ обёртки и доказательство знания фразы (recovery_auth).
 
+// Не через ext.ts: модуль грузится и вне Obsidian (тесты, Node), а ext.ts тянет main.ts → obsidian.
 import { argon2id, phraseDecode, phraseEncode } from "../core/plugin/pkg/selfsync_wasm.js";
 
 const LABEL = "selfsync-cloud/v1";

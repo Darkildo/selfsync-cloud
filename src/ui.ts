@@ -4,10 +4,7 @@
 
 import { type App, Modal, Notice, Setting } from "obsidian";
 
-import { passwordStrength, qrModules } from "../core/plugin/pkg/selfsync_wasm.js";
-import { formatBytes } from "../core/plugin/src/i18n.ts";
-import { qrSvg } from "../core/plugin/src/ui/join.ts";
-import { phraseError } from "../core/plugin/src/ui/recovery.ts";
+import { formatBytes, passwordStrength, phraseError, qrModules, qrSvg } from "../core/plugin/src/ext.ts";
 import type { JoinerHandoff, OwnerHandoff, OwnerStep } from "./cloud.ts";
 import { errorText, formatDate, formatTime, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";

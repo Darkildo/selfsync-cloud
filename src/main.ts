@@ -4,17 +4,13 @@
 
 import { getLanguage, Notice, requestUrl } from "obsidian";
 
-import SelfsyncPlugin from "../core/plugin/src/main.ts";
-import type { Settings } from "../core/plugin/src/settings.ts";
-import type { DiagCheck, EngineConfig } from "../core/plugin/src/types.ts";
-import { protocolVersion } from "../core/plugin/pkg/selfsync_wasm.js";
+import { confirm, type EngineConfig, protocolVersion, SelfsyncPlugin, type Settings } from "../core/plugin/src/ext.ts";
 import type { Transport } from "./api.ts";
 import { Cloud, LOGIN_ACTION } from "./cloud.ts";
 import { errorText, setLanguage, t } from "./i18n.ts";
 import { defaultRegion } from "./regions.ts";
 import { CloudSettingTab } from "./settings.ts";
 import { InviteModal, LoginCodeModal, PhraseModal, RecoverModal, StartModal, UnlockModal } from "./ui.ts";
-import { confirm } from "../core/plugin/src/ui/confirm.ts";
 
 export interface CloudSettings extends Settings {
   /** Регион аккаунта: `cis` (СНГ) или `eu` (Europe). */
@@ -172,7 +168,10 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
   }
 
   override engineConfig(): EngineConfig {
-    return { ...super.engineConfig(), client: `cloud/${this.manifest.version}`, requireEncryption: true };
+    // Сервис отстаёт от ядра по минорной версии протокола намеренно: облаку новые
+    // возможности ядра (обмен ключом /v1/join/handoff) не нужны, у него свой
+    // /account/handoff, и «обновите сервер» пользователю облака не поможет.
+    return { ...super.engineConfig(), client: `cloud/${this.manifest.version}`, requireEncryption: true, serverMinorWarn: null };
   }
 
   /** Ключ vault'а выводится из ключа аккаунта: пароль спрашивается, если ключа
@@ -243,15 +242,6 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
     this.app.saveLocalStorage(REMIND_AT, String(Date.now()));
     const n = new Notice(t("phrase.reminder"), 0);
     n.messageEl.onClickEvent(() => this.showPhrase());
-  }
-
-  /** Сервис отстаёт от ядра по минорной версии протокола намеренно: облаку новые
-   *  возможности ядра (обмен ключом /v1/join/handoff) не нужны, у него свой
-   *  /account/handoff. «Обновите сервер» пользователю облака не поможет — при том же
-   *  мажоре это не предупреждение. */
-  override async diagnose(): Promise<DiagCheck[] | null> {
-    const checks = await super.diagnose();
-    return checks?.map((c) => (c.step === "version" && c.code === "server_old" ? { ...c, level: "ok" as const, code: "ok" } : c)) ?? null;
   }
 
   /** Версия ядра, с которым собран плагин: тег подмодуля и протокол из WASM. */

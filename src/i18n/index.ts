@@ -3,6 +3,7 @@
 // английская. Общие окна и уведомления переводит ядро (core/plugin/src/i18n.ts),
 // язык у обоих выставляется вместе (setLanguage).
 
+// Не через ext.ts: модуль грузится и вне Obsidian (тесты, Node), а ext.ts тянет main.ts → obsidian.
 import { setLanguage as setCoreLanguage } from "../../core/plugin/src/i18n.ts";
 import { type Dict, en, type Key } from "./en.ts";
 import { LOCALES } from "./locales.ts";
