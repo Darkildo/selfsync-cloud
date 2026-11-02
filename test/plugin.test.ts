@@ -196,9 +196,11 @@ test("main.js: ключа аккаунта на устройстве нет — 
   }
 });
 
-/** Сервис на localhost: считает запросы аккаунта, отвечает данными аккаунта #7. */
-async function fakeService(): Promise<{ url: string; account: () => number; close: () => void }> {
+/** Сервис на localhost: считает запросы, отвечает данными аккаунта #7.
+ *  `delayMs` — ответ на `/account` медленный. */
+async function fakeService(delayMs = 0): Promise<{ url: string; account: () => number; total: () => number; close: () => void }> {
   let account = 0;
+  let total = 0;
   const tariff = { id: 1, code: "free", title: "Free", price: "0", status: "active", vaults: 1, bytes_soft: 0, bytes_hard: 1 << 30, devices: 3, max_file: 1 << 20 };
   const view = {
     id: 7, email: "a@example.com", created_at: 0, tariff, usage: { bytes: 0, vaults: 0, devices: 0 },
@@ -206,15 +208,24 @@ async function fakeService(): Promise<{ url: string; account: () => number; clos
     phrase_version: 1, phrase_confirmed: true, terms_version: "", recovery_wrapped: "", kdf: null, salt: null, wrapped_key: null,
   };
   const server = createServer((req, res) => {
+    total++;
     if (req.url === "/cloud/v1/account") {
       account++;
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(view));
+      setTimeout(() => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(view)), delayMs);
       return;
     }
     res.writeHead(503).end();
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, account: () => account, close: () => server.close() };
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    account: () => account,
+    total: () => total,
+    close: () => {
+      server.closeAllConnections();
+      server.close();
+    },
+  };
 }
 
 /**
@@ -329,4 +340,81 @@ test("main.js: данные устарели — открытие вкладки
     plugin.onunload();
     svc.close();
   }
+});
+
+test("main.js: без сессии запуск не ходит в сеть; тарифы — при открытии вкладки", async () => {
+  const svc = await fakeService();
+  const tabs = obsidianTabs();
+  const plugin = await load({ serviceUrl: svc.url });
+  try {
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(svc.total(), 0);
+    tabs.open();
+    await waitFor(() => svc.total() > 0);
+    // Без сессии /account не нужен: только тарифы региона.
+    assert.equal(svc.account(), 0);
+    tabs.close();
+  } finally {
+    tabs.restore();
+    plugin.onunload();
+    svc.close();
+  }
+});
+
+test("main.js: «перечитать» во время загрузки не теряется — второй /account после первого", async () => {
+  const svc = await fakeService(150);
+  const tabs = obsidianTabs();
+  const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  try {
+    await waitFor(() => svc.account() === 1);
+    // Первый ответ ещё в пути, а действие уже просит перечитать.
+    (plugin as unknown as { accountChanged(): void }).accountChanged();
+    await waitFor(() => svc.account() === 2);
+    assert.equal(svc.account(), 2);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(svc.account(), 2);
+    assert.match(accountDesc(tabs.open()), /Free/);
+    tabs.close();
+  } finally {
+    tabs.restore();
+    plugin.onunload();
+    svc.close();
+  }
+});
+
+test("main.js: ключ на устройстве есть, а vault не подключился — ошибка и окно пароля, а не тишина", async () => {
+  const plugin = await load({ session: "cs_x", pendingVault: "c-1" });
+  const opened: unknown[] = [];
+  const open = obsidian.Modal.prototype.open;
+  obsidian.Modal.prototype.open = function (this: unknown) {
+    opened.push(this);
+  };
+  try {
+    const p = plugin as unknown as { askPassword(): void; cloud: { unlock(): Promise<boolean> } };
+    p.cloud.unlock = () => Promise.reject(new Error("network down"));
+    obsidian.shown.length = 0;
+    p.askPassword();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(obsidian.shown.some((m) => m.includes("network down")), obsidian.shown.join(" | "));
+    assert.equal(opened.length, 1);
+    // В следующий раз снова пробуется ключ с устройства, а не сразу пароль.
+    p.cloud.unlock = () => Promise.resolve(true);
+    p.askPassword();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(opened.length, 1);
+  } finally {
+    obsidian.Modal.prototype.open = open;
+    plugin.onunload();
+  }
+});
+
+test("main.js: выгрузка плагина закрывает открытые окна обмена", async () => {
+  const plugin = await load(null);
+  const closed: string[] = [];
+  const modals = (plugin as unknown as { modals: Set<{ close(): void }> }).modals;
+  modals.add({ close: () => closed.push("invite") });
+  modals.add({ close: () => closed.push("handoff") });
+  plugin.onunload();
+  assert.deepEqual(closed, ["invite", "handoff"]);
+  assert.equal(modals.size, 0);
 });

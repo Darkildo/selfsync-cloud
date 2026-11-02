@@ -34,6 +34,8 @@ export class CloudSettingTab extends SelfsyncSettingTab {
   private loading = false;
   /** Пересчёт строк уже запрошен (refresh). */
   private queued = false;
+  /** Перечитать просили во время загрузки: её ответ мог быть до действия. */
+  private again = false;
   /** Аккаунт не загрузился: текст ошибки (нет связи, регион не открыт). */
   private loadError = "";
 
@@ -55,6 +57,11 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     this.loading = true;
     void Promise.allSettled([cloud.refreshAccount(), cloud.loadInfo()]).then(([account]) => {
       this.loading = false;
+      if (this.again) {
+        this.again = false;
+        this.load();
+        return;
+      }
       this.loadedAt = Date.now();
       this.loadError = account.status === "rejected" ? errorText(account.reason) : "";
       // Только перерисовать: accountChanged() перечитал бы аккаунт снова, по кругу.
@@ -65,6 +72,17 @@ export class CloudSettingTab extends SelfsyncSettingTab {
   /** Перечитать аккаунт (после действий): сразу, открыты настройки или нет. */
   reload(): void {
     this.loadedAt = 0;
+    if (this.loading) this.again = true;
+    this.refresh();
+  }
+
+  /** Аккаунт только что пришёл с сервера (ответ на действие или вход): перерисовать
+   *  без нового запроса. Тарифы региона — если их ещё нет (вход в другом регионе). */
+  fresh(): void {
+    const cloud = this.cloudPlugin.cloud;
+    this.loadedAt = Date.now();
+    this.loadError = "";
+    if (!cloud.info() && cloud.server()) void cloud.loadInfo().then(() => this.refresh(), () => undefined);
     this.refresh();
   }
 
@@ -87,7 +105,8 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     // Первая загрузка — с первым update() (addSettingTab) и после reload(). Дальше
     // свежесть проверяет отрисовка строки аккаунта: она идёт при каждом открытии
     // вкладки, а update() по событиям синка при закрытых настройках сеть не трогает.
-    if (this.loadedAt === 0) this.load();
+    // Без сессии при запуске загружать нечего: тарифы — при открытии вкладки.
+    if (this.loadedAt === 0 && this.s.session) this.load();
     const keep = super
       .sections()
       .filter((s) => s.heading === coreT("settings.sync") || s.heading === coreT("configSync.heading"));

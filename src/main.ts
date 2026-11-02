@@ -84,6 +84,8 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
   private triedAccountKey = false;
   /** Строка состояния: фраза восстановления ещё не записана. */
   private phraseEl: HTMLElement | undefined;
+  /** Открытые окна обмена ключом: при выгрузке плагина закрываются, их опрос стоит. */
+  readonly modals = new Set<{ close(): void }>();
 
   override async onload(): Promise<void> {
     setLanguage(getLanguage());
@@ -92,6 +94,13 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
     this.phraseEl.addClass("selfsync-cloud-phrase-bar", "mod-clickable");
     this.registerDomEvent(this.phraseEl, "click", () => this.showPhrase());
     this.updatePhraseBar();
+  }
+
+  override onunload(): void {
+    // Закрытие отменяет незавершённый обмен на сервере и останавливает опрос.
+    for (const m of [...this.modals]) m.close();
+    this.modals.clear();
+    super.onunload();
   }
 
   override async loadSettings(): Promise<void> {
@@ -106,10 +115,13 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
     return new CloudSettingTab(this.app, this);
   }
 
-  /** Аккаунт или vault изменились (вход, подключение, выход): открытые настройки
-   *  перерисовываются, данные аккаунта перечитываются, напоминание о фразе обновляется. */
-  accountChanged(): void {
-    (this.settingTab as CloudSettingTab | undefined)?.reload();
+  /** Аккаунт или vault изменились (вход, подключение, выход): настройки
+   *  перерисовываются, напоминание о фразе обновляется. Данные аккаунта
+   *  перечитываются, если они не `fresh` — не пришли только что с сервера. */
+  accountChanged(o: { fresh?: boolean } = {}): void {
+    const tab = this.settingTab as CloudSettingTab | undefined;
+    if (o.fresh) tab?.fresh();
+    else tab?.reload();
     this.updatePhraseBar();
   }
 
@@ -171,9 +183,18 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
       return;
     }
     this.triedAccountKey = true;
-    void this.cloud.unlock().then((ok) => {
-      if (!ok) new UnlockModal(this.app, this).open();
-    });
+    void this.cloud.unlock().then(
+      (ok) => {
+        if (!ok) new UnlockModal(this.app, this).open();
+      },
+      (e: unknown) => {
+        // Ключ есть, но vault не подключился (нет связи, лимит устройств): без окна
+        // ядро так и ждало бы пароль. В следующий раз — снова ключ с устройства.
+        this.triedAccountKey = false;
+        new Notice(errorText(e));
+        new UnlockModal(this.app, this).open();
+      },
+    );
   }
 
   /** Забытый пароль — восстановление аккаунта, а не фраза vault'а. */

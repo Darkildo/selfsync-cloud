@@ -154,6 +154,10 @@ export interface RedeemOutcome {
 export class Cloud {
   /** Последний ответ `/account` (для настроек). */
   account: AccountView | null = null;
+  /** Номер последнего запроса `/account` и того, чей ответ уже в `account`: ответ на
+   *  запрос, начатый раньше записанного (или до входа и выхода), устарел. */
+  private accountAsked = 0;
+  private accountShown = 0;
   /** Ответы `/info` по адресу сервиса: у каждого региона свои тарифы и KDF. */
   private infos = new Map<string, Info>();
 
@@ -187,9 +191,17 @@ export class Cloud {
     return new CloudApi(server, this.http, this.s.session);
   }
 
-  /** Аккаунт или vault этого устройства изменились: перерисовать настройки. */
-  private changed(): void {
-    this.plugin.accountChanged();
+  /** Аккаунт или vault этого устройства изменились: перерисовать настройки.
+   *  `fresh` — аккаунт только что перечитан, второй раз не нужно. */
+  private changed(o: { fresh?: boolean } = {}): void {
+    this.plugin.accountChanged(o);
+  }
+
+  /** После действия: перечитать аккаунт один раз и перерисовать. Не перечитался
+   *  (нет связи) — настройки попробуют сами. */
+  private async reread(): Promise<void> {
+    const a = await this.refreshAccount().catch(() => null);
+    this.changed({ fresh: a !== null });
   }
 
   // ---------- ключ аккаунта и фраза ----------
@@ -239,8 +251,7 @@ export class Cloud {
     await this.api().confirmPhrase();
     this.keepPhrase(null);
     if (this.account) this.account.phrase_confirmed = true;
-    await this.refreshAccount().catch(() => undefined);
-    this.changed();
+    await this.reread();
   }
 
   /** Новая фраза: прежняя перестаёт действовать. Слова остаются здесь до отметки. */
@@ -254,8 +265,7 @@ export class Cloud {
       this.account.phrase_confirmed = false;
     }
     this.keepPhrase(r.words, version);
-    await this.refreshAccount().catch(() => undefined);
-    this.changed();
+    await this.reread();
     return r.words;
   }
 
@@ -358,31 +368,44 @@ export class Cloud {
     this.s.email = account.email ?? "";
     this.s.session = session;
     this.account = account;
+    this.accountShown = ++this.accountAsked;
     this.rememberAccountKey(accountKey);
     await this.keepWrap(account.kdf, account.salt, account.wrapped_key);
-    this.changed();
+    // Аккаунт — из ответа на вход: перечитывать его сразу не нужно.
+    this.changed({ fresh: true });
   }
 
   /** Сессия, email и ключ аккаунта — забыть (выход, другой аккаунт). */
   private async signedOut(): Promise<void> {
     this.s.session = "";
     this.account = null;
+    this.accountShown = ++this.accountAsked;
     this.rememberAccountKey(null);
     await this.plugin.saveSettings();
     this.changed();
   }
 
   async refreshAccount(): Promise<AccountView | null> {
-    if (!this.s.session) return null;
+    const session = this.s.session;
+    if (!session) return null;
+    const asked = ++this.accountAsked;
+    // Пока шёл запрос, вышли, вошли в другой аккаунт или записан ответ поновее:
+    // этот ответ не про текущий аккаунт — не записывать.
+    const stale = () => this.s.session !== session || asked < this.accountShown;
     try {
-      this.account = await this.api().account();
-      this.s.hasPassword = this.account.has_password;
-      this.s.accountId = this.account.id;
-      this.s.email = this.account.email ?? "";
+      const a = await this.api().account();
+      if (stale()) return this.account;
+      this.accountShown = asked;
+      this.account = a;
+      this.s.hasPassword = a.has_password;
+      this.s.accountId = a.id;
+      this.s.email = a.email ?? "";
       await this.learnDeviceId().catch(() => undefined);
     } catch (e) {
       // Сессию закрыли (смена пароля, блокировка, выход на другом устройстве, срок).
       if (e instanceof CloudError && (e.status === 401 || e.status === 403)) {
+        if (stale()) return this.account;
+        this.accountShown = asked;
         this.s.session = "";
         await this.plugin.saveSettings();
         this.account = null;
@@ -414,14 +437,12 @@ export class Cloud {
   /** Закрыть все сессии, кроме этой. */
   async logoutAll(): Promise<void> {
     await this.api().logoutAll();
-    await this.refreshAccount();
-    this.changed();
+    await this.reread();
   }
 
   async revokeSession(id: number): Promise<void> {
     await this.api().revokeSession(id);
-    await this.refreshAccount();
-    this.changed();
+    await this.reread();
   }
 
   /** Подтверждение необратимого действия: пароль, если он дан, иначе ключ аккаунта. */
@@ -468,8 +489,7 @@ export class Cloud {
     await this.api().setEmail(email, cred, await keyAuth(key));
     this.s.email = email.trim().toLowerCase();
     await this.keepWrap(kdfJson(cred.kdf), toB64(cred.salt), toB64(cred.wrappedKey));
-    await this.refreshAccount().catch(() => undefined);
-    this.changed();
+    await this.reread();
   }
 
   private async keysFor(password: string) {
@@ -650,8 +670,7 @@ export class Cloud {
       if (e instanceof CloudError && (e.status === 401 || e.status === 403 || e.status === 404)) return false;
       throw e;
     }
-    await this.refreshAccount().catch(() => undefined);
-    this.changed();
+    await this.reread();
     return true;
   }
 
@@ -783,8 +802,7 @@ export class Cloud {
 
   async revokeDevice(id: number): Promise<void> {
     await this.api().revokeDevice(id);
-    await this.refreshAccount();
-    this.changed();
+    await this.reread();
   }
 
   private needAccountKey(): Uint8Array<ArrayBuffer> {

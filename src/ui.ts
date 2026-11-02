@@ -11,6 +11,7 @@ import { phraseError } from "../core/plugin/src/ui/recovery.ts";
 import type { JoinerHandoff, OwnerHandoff, OwnerStep } from "./cloud.ts";
 import { errorText, formatDate, formatTime, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
+import { poll } from "./poll.ts";
 import { REGIONS, TERMS_URL } from "./regions.ts";
 
 /** Строка с несколькими кнопками: на телефоне они переносятся (правило ядра `.selfsync-actions`, core/plugin/styles.css). */
@@ -27,13 +28,9 @@ function weak(password: string): boolean {
   return password.length < 10 || passwordStrength(password) < WEAK_BITS;
 }
 
-/** Опрос обмена ключом. */
-const POLL_MS = 1500;
 /** Обмен у сервера живёт 10 минут с кода и ещё 10 со входа нового устройства. */
 const OWNER_MS = 21 * 60 * 1000;
 const JOINER_MS = 11 * 60 * 1000;
-
-const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
 /** Цифры сверки парами по три: «123 456». */
 function sasText(sas: string): string {
@@ -439,6 +436,7 @@ export class InviteModal extends Modal {
 
   override onOpen(): void {
     this.alive = true;
+    this.plugin.modals.add(this);
     this.setTitle(t("invite.title"));
     void this.show();
   }
@@ -481,37 +479,34 @@ export class InviteModal extends Modal {
    *  ключ сразу, по коду вручную — после сверки цифр. */
   private async watch(h: OwnerHandoff, el: HTMLElement, confirmed = false): Promise<void> {
     const status = el.createEl("p", { text: t("handoff.ownerWaiting") });
-    const deadline = Date.now() + OWNER_MS;
-    while (this.alive && Date.now() < deadline) {
-      let step: OwnerStep;
-      try {
-        step = await this.plugin.cloud.ownerStep(h, confirmed);
-      } catch (e) {
-        // Нет связи — пробовать дальше, пока окно открыто.
-        status.setText(errorText(e));
-        await sleep(POLL_MS);
-        continue;
-      }
-      if (!this.alive) return;
-      if (step.state === "waiting") {
-        status.setText(t("handoff.ownerWaiting"));
-        await sleep(POLL_MS);
-        continue;
-      }
-      el.empty();
-      if (step.state === "confirm") this.confirm(h, el, step.name, step.sas);
-      else if (step.state === "delivered") el.createEl("p", { text: t("handoff.delivered", { name: step.name }) });
-      else if (step.state === "sent") el.createEl("p", { text: t("handoff.sentUnconfirmed") });
-      else if (step.state === "maybeSent") el.createEl("p", { text: t("handoff.maybeSent"), cls: "mod-warning" });
-      else if (step.state === "mismatch") {
-        el.createEl("p", { text: t("handoff.ownerMismatch", { name: step.name }), cls: "mod-warning" });
-        void this.plugin.cloud.ownerCancel(h);
-        this.offerClose(h, el, step.name);
-      } else if (step.state === "aborted") el.createEl("p", { text: t("handoff.aborted"), cls: "mod-warning" });
-      else el.createEl("p", { text: t("handoff.expired"), cls: "mod-warning" });
+    const got: { step?: OwnerStep } = {};
+    const end = await poll(
+      async () => {
+        const step = await this.plugin.cloud.ownerStep(h, confirmed);
+        if (step.state !== "waiting") got.step = step;
+        else status.setText(t("handoff.ownerWaiting"));
+        return step.state !== "waiting";
+      },
+      // Нет связи — пробовать дальше, пока окно открыто.
+      { alive: () => this.alive, deadline: Date.now() + OWNER_MS, onError: (e) => status.setText(errorText(e)) },
+    );
+    if (!this.alive) return;
+    const step = got.step;
+    if (end === "timeout" || !step) {
+      status.setText(t("handoff.expired"));
       return;
     }
-    if (this.alive) status.setText(t("handoff.expired"));
+    el.empty();
+    if (step.state === "confirm") this.confirm(h, el, step.name, step.sas);
+    else if (step.state === "delivered") el.createEl("p", { text: t("handoff.delivered", { name: step.name }) });
+    else if (step.state === "sent") el.createEl("p", { text: t("handoff.sentUnconfirmed") });
+    else if (step.state === "maybeSent") el.createEl("p", { text: t("handoff.maybeSent"), cls: "mod-warning" });
+    else if (step.state === "mismatch") {
+      el.createEl("p", { text: t("handoff.ownerMismatch", { name: step.name }), cls: "mod-warning" });
+      void this.plugin.cloud.ownerCancel(h);
+      this.offerClose(h, el, step.name);
+    } else if (step.state === "aborted") el.createEl("p", { text: t("handoff.aborted"), cls: "mod-warning" });
+    else el.createEl("p", { text: t("handoff.expired"), cls: "mod-warning" });
   }
 
   /** Ключ уходит только с согласия здесь: по QR — одним нажатием, по коду
@@ -566,6 +561,7 @@ export class InviteModal extends Modal {
 
   override onClose(): void {
     this.alive = false;
+    this.plugin.modals.delete(this);
     if (this.handoff) void this.plugin.cloud.ownerCancel(this.handoff);
     this.contentEl.empty();
   }
@@ -588,6 +584,7 @@ export class HandoffModal extends Modal {
 
   override onOpen(): void {
     this.alive = true;
+    this.plugin.modals.add(this);
     this.setTitle(t("handoff.title"));
     void this.wait();
   }
@@ -628,24 +625,27 @@ export class HandoffModal extends Modal {
             }),
         );
     };
-    const deadline = Date.now() + JOINER_MS;
-    while (this.alive && !stopped && Date.now() < deadline) {
-      try {
+    const outcome = await poll(
+      async () => {
         const step = await this.plugin.cloud.joinerStep(this.h);
-        if (!this.alive) return;
+        if (!this.alive || stopped) return true;
         if (step.state === "done") {
           new Notice(step.error === undefined ? t("handoff.done") : `${t("handoff.done")}. ${errorText(step.error)}`);
           this.close();
           if (!step.vault) new VaultModal(this.app, this.plugin).open();
-          return;
+          return true;
         }
-        if (step.state === "mismatch") return end(t("handoff.mismatch"));
+        if (step.state === "mismatch") {
+          end(t("handoff.mismatch"));
+          return true;
+        }
         if (step.state === "gone") {
           // Отменили там или истёк: сразу к паролю или фразе.
-          if (!stopped) new Notice(t("handoff.gone"));
-          return this.fallback();
+          new Notice(t("handoff.gone"));
+          this.fallback();
+          return true;
         }
-        if (step.state === "compare" && !stopped) {
+        if (step.state === "compare") {
           digits.setText(sasText(step.sas));
           if (h.pinned) status.setText(t("handoff.compareQr"));
           else if (h.confirmed) status.setText(t("handoff.waitSend"));
@@ -654,13 +654,12 @@ export class HandoffModal extends Modal {
             ask();
           }
         }
-      } catch (e) {
-        // Нет связи — спросить снова: сервер отдаёт обмен повторно до истечения.
-        status.setText(errorText(e));
-      }
-      await sleep(POLL_MS);
-    }
-    if (this.alive && !stopped) end(t("handoff.timeout"));
+        return false;
+      },
+      // Нет связи — спросить снова: сервер отдаёт обмен повторно до истечения.
+      { alive: () => this.alive && !stopped, deadline: Date.now() + JOINER_MS, onError: (e) => status.setText(errorText(e)) },
+    );
+    if (outcome === "timeout" && this.alive && !stopped) end(t("handoff.timeout"));
   }
 
   /** Ключ иначе: пароль, если он есть у аккаунта, иначе фраза. */
@@ -672,6 +671,7 @@ export class HandoffModal extends Modal {
 
   override onClose(): void {
     this.alive = false;
+    this.plugin.modals.delete(this);
     // Закрыли, не получив ключа (или ушли к паролю): источник увидит отказ.
     void this.plugin.cloud.joinerCancel(this.h);
     this.contentEl.empty();
