@@ -15,6 +15,7 @@ jobs:
   core:
     name: core/ — побайтно сборка тега selfsync
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/core-tools
@@ -31,6 +32,7 @@ jobs:
   plugin:
     name: Плагин — типы, линт Obsidian, сборка, тесты
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
