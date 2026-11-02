@@ -4,10 +4,7 @@
 
 import { type App, Notice, type Setting } from "obsidian";
 
-import { formatBytes, t as coreT } from "../core/plugin/src/i18n.ts";
-import { type Row, type Section, SelfsyncSettingTab } from "../core/plugin/src/settings.ts";
-import { confirm } from "../core/plugin/src/ui/confirm.ts";
-import { DiagnoseModal } from "../core/plugin/src/ui/diagnose.ts";
+import { confirm, t as coreT, DiagnoseModal, formatBytes, type Row, type Section, SelfsyncSettingTab } from "../core/plugin/src/ext.ts";
 import type { TariffView } from "./api.ts";
 import { errorText, formatDateTime, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
@@ -32,8 +29,6 @@ export function tariffLimits(x: TariffView): string {
 export class CloudSettingTab extends SelfsyncSettingTab {
   private loadedAt = 0;
   private loading = false;
-  /** Пересчёт строк уже запрошен (refresh). */
-  private queued = false;
   /** Перечитать просили во время загрузки: её ответ мог быть до действия. */
   private again = false;
   /** Аккаунт не загрузился: текст ошибки (нет связи, регион не открыт). */
@@ -86,21 +81,6 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     this.refresh();
   }
 
-  /**
-   * Пересчитать строки. Obsidian 1.13+ при открытии вкладки рисует строки, сохранённые
-   * последним update(), а сам update() перерисовывает только открытую вкладку. Поэтому
-   * update() — всегда, не только когда вкладка видна, иначе откроется устаревшее
-   * «Загружаю аккаунт…». Несколько событий подряд — один пересчёт.
-   */
-  override refresh(): void {
-    if (this.queued) return;
-    this.queued = true;
-    queueMicrotask(() => {
-      this.queued = false;
-      this.update();
-    });
-  }
-
   protected override sections(): Section[] {
     // Первая загрузка — с первым update() (addSettingTab) и после reload(). Дальше
     // свежесть проверяет отрисовка строки аккаунта: она идёт при каждом открытии
@@ -109,7 +89,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     if (this.loadedAt === 0 && this.s.session) this.load();
     const keep = super
       .sections()
-      .filter((s) => s.heading === coreT("settings.sync") || s.heading === coreT("configSync.heading"));
+      .filter((s) => s.id === "sync" || s.id === "configSync");
     const account = this.accountRows().map((r, i) =>
       i === 0
         ? {

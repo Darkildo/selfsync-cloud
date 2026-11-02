@@ -72,9 +72,14 @@ test("main.js: ядро из core/, шифрование обязательно,
     assert.ok(core.protocol >= 1);
     const cfg = plugin.engineConfig();
     assert.equal(cfg.requireEncryption, true);
+    // Сервис намеренно на младшей минорной версии протокола: «обновите сервер» не показывать.
+    assert.equal(cfg.serverMinorWarn, null);
+    // Журнал синка ядра (sync.log) лежит в каталоге плагина: в синк он не попадает.
+    assert.ok((cfg.hardExcludes as string[]).some((p) => p.endsWith("/plugins/selfsync-cloud/")), JSON.stringify(cfg.hardExcludes));
     assert.equal(cfg.client, "cloud/0.2.0");
     const ids = plugin.commands.map((c) => c.id);
     assert.ok(ids.includes("account") && ids.includes("invite") && ids.includes("phrase"), ids.join(", "));
+    assert.ok(ids.includes("log"), ids.join(", "));
     // Ссылки подключения self-hosted сервера здесь нет.
     assert.ok(!ids.includes("connect"));
     // Без подключения синк не запущен.
@@ -228,52 +233,19 @@ async function fakeService(delayMs = 0): Promise<{ url: string; account: () => n
   };
 }
 
-/**
- * Вкладка настроек так, как её ведёт Obsidian 1.13+ (по app.js 1.14.4):
- * - addSettingTab() вызывает update();
- * - update() сохраняет getSettingDefinitions() и перерисовывает, только если вкладка открыта;
- * - открытие вкладки рисует сохранённые строки, getSettingDefinitions() не зовёт.
- */
-function obsidianTabs(): { open(): obsidian.Setting[]; close(): void; rows(): obsidian.Setting[]; restore(): void } {
-  type Tab = { getSettingDefinitions(): { items: { render(s: unknown): unknown }[] }[]; settingItems?: { items: { render(s: unknown): unknown }[] }[] };
-  const P = obsidian.PluginSettingTab.prototype as unknown as { update(this: Tab): void };
-  const A = obsidian.Plugin.prototype as unknown as { addSettingTab(this: unknown, tab: Tab): void };
-  const update = P.update;
-  const add = A.addSettingTab;
-  let active: Tab | undefined;
-  let tab: Tab | undefined;
-  let shown: obsidian.Setting[] = [];
-  const renderTab = (t: Tab): void => {
-    for (const r of shown) r.settingEl.isConnected = false;
-    obsidian.settings.length = 0;
-    for (const g of t.settingItems ?? []) for (const it of g.items) it.render(new obsidian.Setting());
-    shown = [...obsidian.settings];
-  };
-  P.update = function () {
-    this.settingItems = this.getSettingDefinitions();
-    if (active === this) renderTab(this);
-  };
-  A.addSettingTab = function (t) {
-    add.call(this, t);
-    tab = t;
-    t.settingItems = t.getSettingDefinitions();
-  };
-  const rows = (): obsidian.Setting[] => shown.filter((s) => !s.hidden && s.name !== "");
+/** Вкладка настроек через заглушку ядра: она ведёт себя как Obsidian 1.13+ — addSettingTab()
+ *  вызывает update(), update() перерисовывает только открытую вкладку, а открытие рисует
+ *  сохранённые строки, не вызывая getSettingDefinitions(). */
+function tabOf(plugin: unknown): { open(): obsidian.Setting[]; close(): void; rows(): obsidian.Setting[] } {
+  const tab = (plugin as { settingTab: obsidian.PluginSettingTab }).settingTab;
+  const rows = (): obsidian.Setting[] => tab.rendered.filter((s) => !s.hidden && s.name !== "");
   return {
     open: () => {
-      active = tab;
-      if (tab) renderTab(tab);
+      tab.open();
       return rows();
     },
-    close: () => {
-      active = undefined;
-      for (const r of shown) r.settingEl.isConnected = false;
-    },
+    close: () => tab.close(),
     rows,
-    restore: () => {
-      P.update = update;
-      A.addSettingTab = add;
-    },
   };
 }
 
@@ -284,15 +256,14 @@ const accountDesc = (rows: obsidian.Setting[]): string => rows.find((r) => r.nam
 
 test("main.js: аккаунт дочитан при закрытых настройках — при открытии виден тариф", async () => {
   const svc = await fakeService();
-  const tabs = obsidianTabs();
   const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  const tabs = tabOf(plugin);
   try {
     await waitFor(() => svc.account() === 1);
     await new Promise((r) => setTimeout(r, 50));
     assert.match(accountDesc(tabs.open()), /Free/);
     assert.equal(svc.account(), 1);
   } finally {
-    tabs.restore();
     plugin.onunload();
     svc.close();
   }
@@ -300,8 +271,8 @@ test("main.js: аккаунт дочитан при закрытых настр�
 
 test("main.js: настройки открыты во время загрузки — перерисованы, ровно один /account", async () => {
   const svc = await fakeService();
-  const tabs = obsidianTabs();
   const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  const tabs = tabOf(plugin);
   try {
     assert.equal(accountDesc(tabs.open()), "Загружаю аккаунт…");
     await waitFor(() => /Free/.test(accountDesc(tabs.rows())));
@@ -310,7 +281,6 @@ test("main.js: настройки открыты во время загрузк�
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(svc.account(), 1);
   } finally {
-    tabs.restore();
     plugin.onunload();
     svc.close();
   }
@@ -318,8 +288,8 @@ test("main.js: настройки открыты во время загрузк�
 
 test("main.js: данные устарели — открытие вкладки перечитывает аккаунт, события синка — нет", async () => {
   const svc = await fakeService();
-  const tabs = obsidianTabs();
   const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  const tabs = tabOf(plugin);
   try {
     await waitFor(() => svc.account() === 1);
     await new Promise((r) => setTimeout(r, 50));
@@ -336,7 +306,6 @@ test("main.js: данные устарели — открытие вкладки
     assert.match(accountDesc(tabs.rows()), /Free/);
     tabs.close();
   } finally {
-    tabs.restore();
     plugin.onunload();
     svc.close();
   }
@@ -344,8 +313,8 @@ test("main.js: данные устарели — открытие вкладки
 
 test("main.js: без сессии запуск не ходит в сеть; тарифы — при открытии вкладки", async () => {
   const svc = await fakeService();
-  const tabs = obsidianTabs();
   const plugin = await load({ serviceUrl: svc.url });
+  const tabs = tabOf(plugin);
   try {
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(svc.total(), 0);
@@ -355,7 +324,6 @@ test("main.js: без сессии запуск не ходит в сеть; т�
     assert.equal(svc.account(), 0);
     tabs.close();
   } finally {
-    tabs.restore();
     plugin.onunload();
     svc.close();
   }
@@ -363,8 +331,8 @@ test("main.js: без сессии запуск не ходит в сеть; т�
 
 test("main.js: «перечитать» во время загрузки не теряется — второй /account после первого", async () => {
   const svc = await fakeService(150);
-  const tabs = obsidianTabs();
   const plugin = await load({ session: "cs_x", email: "a@example.com", serviceUrl: svc.url });
+  const tabs = tabOf(plugin);
   try {
     await waitFor(() => svc.account() === 1);
     // Первый ответ ещё в пути, а действие уже просит перечитать.
@@ -376,7 +344,6 @@ test("main.js: «перечитать» во время загрузки не т
     assert.match(accountDesc(tabs.open()), /Free/);
     tabs.close();
   } finally {
-    tabs.restore();
     plugin.onunload();
     svc.close();
   }

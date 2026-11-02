@@ -76,6 +76,7 @@ interface Plugin {
   settings: Record<string, string>;
   cloud: CloudPart;
   runner?: { idle(): Promise<void>; send(e: unknown): void; status(): Status };
+  diagnose(): Promise<{ step: string; level: string; code: string }[] | null>;
 }
 
 let server: { url: string; data: string; proc: ChildProcess } | undefined;
@@ -213,6 +214,12 @@ test("облако: регистрация, vault, QR, код, вход, лим�
     const s = a.plugin.runner?.status();
     return s?.encrypted === true && s.pending === 0 && s.state === "idle";
   });
+  // Сервис на младшей минорной версии протокола, чем ядро: проверка соединения не просит
+  // «обновить сервер» (serverMinorWarn: null).
+  const checks = (await a.plugin.diagnose()) ?? [];
+  const version = checks.find((c) => c.step === "version");
+  assert.ok(version, JSON.stringify(checks));
+  assert.notEqual(version.code, "server_old", JSON.stringify(version));
 
   // B: QR — ключ аккаунта обменом с A, без ввода.
   const inv = await a.plugin.cloud.accountCode("phone");
