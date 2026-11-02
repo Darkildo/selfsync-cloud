@@ -11,7 +11,7 @@ import { DiagnoseModal } from "../core/plugin/src/ui/diagnose.ts";
 import type { TariffView } from "./api.ts";
 import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
-import { ChangePasswordModal, EmailPasswordModal, ExistingModal, InviteModal, PasswordPromptModal, StartModal, VaultModal } from "./ui.ts";
+import { actions, ChangePasswordModal, EmailPasswordModal, ExistingModal, InviteModal, PasswordPromptModal, StartModal, VaultModal } from "./ui.ts";
 
 /** Данные аккаунта старее — перечитать при открытии вкладки. */
 const STALE_MS = 30_000;
@@ -107,7 +107,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
         name,
         desc,
         build: (s: Setting) => {
-          s.setName(name).setDesc(desc);
+          actions(s).setName(name).setDesc(desc);
           if (a.has_password) s.addButton((b) => b.setButtonText(t("account.changePassword")).onClick(() => new ChangePasswordModal(this.app, this.cloudPlugin).open()));
           else if (cloud.accountKey()) s.addButton((b) => b.setButtonText(t("account.addEmail")).onClick(() => new EmailPasswordModal(this.app, this.cloudPlugin).open()));
           s.addButton((b) => b.setButtonText(t("account.logout")).onClick(() => void cloud.logout()));
@@ -150,7 +150,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
         name: label,
         desc,
         build: (s: Setting) => {
-          s.setName(label).setDesc(desc);
+          actions(s).setName(label).setDesc(desc);
           if (this.loadError) s.addButton((b) => b.setButtonText(t("account.retry")).onClick(() => this.reload()));
           s.addButton((b) => b.setButtonText(t("account.logout")).onClick(() => void cloud.logout()));
         },
@@ -163,7 +163,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
         name: "",
         desc,
         build: (s: Setting) => {
-          s.setDesc(desc);
+          actions(s).setDesc(desc);
           if (!invited) s.addButton((b) => b.setButtonText(t("start.begin")).setCta().onClick(() => new StartModal(this.app, this.cloudPlugin).open()));
           s.addButton((b) => b.setButtonText(t("start.signIn")).onClick(() => new ExistingModal(this.app, this.cloudPlugin).open()));
         },
@@ -233,7 +233,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
           name,
           desc,
           build: (s: Setting) => {
-            s.setName(name).setDesc(desc);
+            actions(s).setName(name).setDesc(desc);
             if (canInvite) s.addButton((b) => b.setButtonText(t("vault.invite")).onClick(() => new InviteModal(this.app, this.cloudPlugin).open()));
             s.addButton((b) =>
               b

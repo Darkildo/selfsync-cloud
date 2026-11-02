@@ -13,6 +13,12 @@ import { errorText, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
 import { REGIONS, TERMS_URL } from "./regions.ts";
 
+/** Строка с несколькими кнопками: на узком экране они переносятся (styles.css, `.selfsync-actions`). */
+export function actions(s: Setting): Setting {
+  s.settingEl.addClass("selfsync-actions");
+  return s;
+}
+
 /** Порог стойкости пароля, бит (как у пароля шифрования в selfsync). */
 const WEAK_BITS = 50;
 
@@ -250,7 +256,7 @@ export class PhraseModal extends Modal {
     for (const w of this.words) list.createEl("li", { text: w });
     new Setting(contentEl).addButton((b) => b.setButtonText(t("phrase.copy")).onClick(() => void navigator.clipboard.writeText(this.words.join(" "))));
     new Setting(contentEl).setName(t("phrase.written")).addToggle((x) => x.onChange((v) => (this.written = v)));
-    new Setting(contentEl)
+    actions(new Setting(contentEl))
       .addButton((b) => b.setButtonText(t("phrase.later")).onClick(() => this.closeLater()))
       .addButton((b) =>
         b
@@ -400,7 +406,7 @@ export class VaultModal extends Modal {
     }
     const full = a.tariff.vaults > 0 && a.vaults.length >= a.tariff.vaults;
     let label = this.app.vault.getName();
-    const create = new Setting(contentEl).setName(t("vault.create")).setDesc(full ? t("vault.limit", { n: a.tariff.vaults }) : t("vault.createDesc"));
+    const create = actions(new Setting(contentEl)).setName(t("vault.create")).setDesc(full ? t("vault.limit", { n: a.tariff.vaults }) : t("vault.createDesc"));
     if (!full) {
       create.addText((x) => x.setValue(label).onChange((v) => (label = v.trim())));
       create.addButton((b) => b.setButtonText(t("vault.create")).setCta().onClick(() => act(() => cloud.createVault(label || this.app.vault.getName()))));
@@ -515,7 +521,7 @@ export class InviteModal extends Modal {
       el.createEl("p", { text: t("handoff.confirm", { name }) });
       el.createEl("p", { text: sasText(sas), cls: "selfsync-cloud-sas" });
     }
-    new Setting(el)
+    actions(new Setting(el))
       .addButton((b) =>
         b.setButtonText(t(sas === null ? "handoff.cancel" : "handoff.noMatch")).onClick(() => {
           el.empty();
@@ -600,7 +606,7 @@ export class HandoffModal extends Modal {
     // Ответ на цифры — один раз: «совпадают» разрешает применить ключ, «не совпадают» его выбрасывает.
     const ask = () => {
       if (answer.childElementCount > 0) return;
-      new Setting(answer)
+      actions(new Setting(answer))
         .addButton((b) =>
           b.setButtonText(t("handoff.joinNoMatch")).onClick(() => {
             void this.plugin.cloud.joinerCancel(h);
