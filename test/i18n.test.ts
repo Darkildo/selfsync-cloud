@@ -29,8 +29,11 @@ test("выбор языка: точный код, базовый язык, en", 
 });
 
 test("нет строки в переводе — английская; письмо справа налево — параметры изолированы", () => {
+  // Подменяем настоящие словари, после теста возвращаем.
+  const saved = { zh: LOCALES["zh"], "zh-tw": LOCALES["zh-tw"], ar: LOCALES["ar"] };
   LOCALES["xx"] = { "settings.account": "X" };
   LOCALES["zh"] = { "settings.account": "Z" };
+  delete LOCALES["zh-tw"];
   LOCALES["ar"] = { "invite.code": "A {code}" };
   try {
     setLanguage("xx-YY");
@@ -47,8 +50,10 @@ test("нет строки в переводе — английская; пись
     assert.equal(formatDate(Date.UTC(2026, 10, 2, 12)), "02.11.26");
   } finally {
     delete LOCALES["xx"];
-    delete LOCALES["zh"];
-    delete LOCALES["ar"];
+    for (const [code, dict] of Object.entries(saved)) {
+      if (dict) LOCALES[code] = dict;
+      else delete LOCALES[code];
+    }
     setLanguage("en");
   }
 });
