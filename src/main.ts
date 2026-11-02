@@ -2,11 +2,11 @@
 // истории, конфликтов и корзины, — плюс аккаунт облака вместо ссылок
 // подключения. Шифрование обязательно: без ключа ядро ничего не отправляет.
 
-import { moment, Notice, requestUrl } from "obsidian";
+import { getLanguage, Notice, requestUrl } from "obsidian";
 
 import SelfsyncPlugin from "../core/plugin/src/main.ts";
 import type { Settings } from "../core/plugin/src/settings.ts";
-import type { EngineConfig } from "../core/plugin/src/types.ts";
+import type { DiagCheck, EngineConfig } from "../core/plugin/src/types.ts";
 import { protocolVersion } from "../core/plugin/pkg/selfsync_wasm.js";
 import type { Transport } from "./api.ts";
 import { Cloud, LOGIN_ACTION } from "./cloud.ts";
@@ -86,7 +86,7 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
   private phraseEl: HTMLElement | undefined;
 
   override async onload(): Promise<void> {
-    setLanguage(moment.locale());
+    setLanguage(getLanguage());
     await super.onload();
     this.phraseEl = this.addStatusBarItem();
     this.phraseEl.addClass("selfsync-cloud-phrase-bar", "mod-clickable");
@@ -99,7 +99,7 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
     this.settings = { ...CLOUD_DEFAULTS, ...this.settings };
     // Настройки 0.1.x: пароль был у всех.
     if (this.settings.wrappedKey) this.settings.hasPassword = true;
-    if (!this.settings.region) this.settings.region = defaultRegion(moment.locale());
+    if (!this.settings.region) this.settings.region = defaultRegion(getLanguage());
   }
 
   protected override createSettingTab(): CloudSettingTab {
@@ -222,6 +222,15 @@ export default class SelfsyncCloudPlugin extends SelfsyncPlugin {
     this.app.saveLocalStorage(REMIND_AT, String(Date.now()));
     const n = new Notice(t("phrase.reminder"), 0);
     n.messageEl.onClickEvent(() => this.showPhrase());
+  }
+
+  /** Сервис отстаёт от ядра по минорной версии протокола намеренно: облаку новые
+   *  возможности ядра (обмен ключом /v1/join/handoff) не нужны, у него свой
+   *  /account/handoff. «Обновите сервер» пользователю облака не поможет — при том же
+   *  мажоре это не предупреждение. */
+  override async diagnose(): Promise<DiagCheck[] | null> {
+    const checks = await super.diagnose();
+    return checks?.map((c) => (c.step === "version" && c.code === "server_old" ? { ...c, level: "ok" as const, code: "ok" } : c)) ?? null;
   }
 
   /** Версия ядра, с которым собран плагин: тег подмодуля и протокол из WASM. */

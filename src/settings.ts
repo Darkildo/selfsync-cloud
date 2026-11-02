@@ -9,7 +9,7 @@ import { type Row, type Section, SelfsyncSettingTab } from "../core/plugin/src/s
 import { confirm } from "../core/plugin/src/ui/confirm.ts";
 import { DiagnoseModal } from "../core/plugin/src/ui/diagnose.ts";
 import type { TariffView } from "./api.ts";
-import { errorText, t } from "./i18n.ts";
+import { errorText, formatDateTime, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
 import { actions, ChangePasswordModal, EmailPasswordModal, ExistingModal, InviteModal, PasswordPromptModal, StartModal, VaultModal } from "./ui.ts";
 
@@ -210,14 +210,15 @@ export class CloudSettingTab extends SelfsyncSettingTab {
       desc: t("account.serviceDesc"),
       build: (s: Setting) => {
         s.setName(t("account.service")).setDesc(t("account.serviceDesc"));
-        s.addText((x) =>
+        s.addText((x) => {
+          x.inputEl.dir = "ltr";
           x
             .setValue(this.s.serviceUrl)
             .onChange(async (v) => {
               this.s.serviceUrl = v.trim();
               await this.cloudPlugin.saveSettings();
-            }),
-        );
+            });
+        });
       },
     });
     return rows;
@@ -310,7 +311,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     if (!a) return [];
     const rows: Row[] = a.sessions.map((x) => {
       const name = x.current ? t("devices.current", { name: x.name }) : x.name;
-      const time = x.last_seen ? t("sessions.lastSeen", { time: new Date(x.last_seen).toLocaleString() }) : "";
+      const time = x.last_seen ? t("sessions.lastSeen", { time: formatDateTime(x.last_seen) }) : "";
       const desc = [x.client, time].filter(Boolean).join(" · ");
       return {
         name,
@@ -357,7 +358,7 @@ export class CloudSettingTab extends SelfsyncSettingTab {
     if (!a || a.devices.length === 0) return [{ name: "", build: (s: Setting) => s.setDesc(t("devices.none")) }];
     const label = (vault: string) => a.vaults.find((v) => v.name === vault)?.label ?? vault;
     return a.devices.map((d) => {
-      const desc = t("devices.lastSeen", { vault: label(d.vault), time: d.last_seen ? new Date(d.last_seen).toLocaleString() : "—" });
+      const desc = t("devices.lastSeen", { vault: label(d.vault), time: d.last_seen ? formatDateTime(d.last_seen) : "—" });
       // Это устройство отключают в разделе vault'а: там ещё забываются ключи.
       const current = this.s.deviceId !== 0 && d.id === this.s.deviceId;
       const name = current ? t("devices.current", { name: d.name }) : d.name;

@@ -9,11 +9,11 @@ import { formatBytes } from "../core/plugin/src/i18n.ts";
 import { qrSvg } from "../core/plugin/src/ui/join.ts";
 import { phraseError } from "../core/plugin/src/ui/recovery.ts";
 import type { JoinerHandoff, OwnerHandoff, OwnerStep } from "./cloud.ts";
-import { errorText, t } from "./i18n.ts";
+import { errorText, formatDate, formatTime, t } from "./i18n.ts";
 import type SelfsyncCloudPlugin from "./main.ts";
 import { REGIONS, TERMS_URL } from "./regions.ts";
 
-/** Строка с несколькими кнопками: на узком экране они переносятся (styles.css, `.selfsync-actions`). */
+/** Строка с несколькими кнопками: на телефоне они переносятся (правило ядра `.selfsync-actions`, core/plugin/styles.css). */
 export function actions(s: Setting): Setting {
   s.settingEl.addClass("selfsync-actions");
   return s;
@@ -63,6 +63,8 @@ abstract class Form extends Modal {
     const s = new Setting(this.contentEl).setName(name);
     if (desc) s.setDesc(desc);
     s.addText((x) => {
+      // Email, пароль и код — латиница и цифры: слева направо и в арабском интерфейсе.
+      x.inputEl.dir = "ltr";
       if (secret) x.inputEl.type = "password";
       x.setValue(value).onChange(set);
       x.inputEl.addEventListener("keydown", (e) => {
@@ -309,6 +311,7 @@ export class RecoverModal extends Form {
     this.text(t("auth.email"), this.email, (v) => (this.email = v.trim()));
     new Setting(this.contentEl).setName(t("recover.phrase")).addTextArea((x) => {
       x.inputEl.rows = 4;
+      x.inputEl.dir = "ltr";
       x.onChange((v) => (this.phrase = v));
     });
     this.text(t("auth.password"), "", (v) => (this.password = v), true, t("auth.passwordDesc"));
@@ -349,6 +352,7 @@ export class PhraseLoginModal extends Form {
     );
     new Setting(this.contentEl).setName(t("recover.phrase")).addTextArea((x) => {
       x.inputEl.rows = 4;
+      x.inputEl.dir = "ltr";
       x.onChange((v) => (this.phrase = v));
     });
     this.footer(t("account.login"));
@@ -401,7 +405,7 @@ export class VaultModal extends Modal {
     for (const v of a.vaults) {
       new Setting(contentEl)
         .setName(v.label)
-        .setDesc(t("vault.connectDesc", { used: formatBytes(v.used_bytes), date: new Date(v.created_at).toLocaleDateString() }))
+        .setDesc(t("vault.connectDesc", { used: formatBytes(v.used_bytes), date: formatDate(v.created_at) }))
         .addButton((b) => b.setButtonText(t("vault.connect")).onClick(() => act(() => cloud.connectVault(v.name))));
     }
     const full = a.tariff.vaults > 0 && a.vaults.length >= a.tariff.vaults;
@@ -459,7 +463,7 @@ export class InviteModal extends Modal {
     }
     try {
       const inv = await cloud.accountCode("");
-      const until = new Date(inv.expiresAt).toLocaleTimeString();
+      const until = formatTime(inv.expiresAt);
       contentEl.createEl("p", { text: t("invite.desc", { until }) });
       contentEl.appendChild(qrSvg(document, qrModules(inv.uri)));
       const code = formatCode(inv.code);
