@@ -45,6 +45,8 @@ The plugin follows the language of the Obsidian app and is translated into every
 
 This repository adds only the cloud screens: account creation and sign-in, the recovery phrase, plans and device connection. The sync engine is the open selfsync project at a released tag, kept in `core/`: its plugin sources and styles, its MIT license and the engine compiled to WebAssembly. `core/SOURCE` names the tag and commit. CI rebuilds `core/` from that tag with `scripts/core.sh check` and fails unless the result is byte-identical, so `core/` cannot drift from the published selfsync.
 
+`main.js` carries the WebAssembly engine and the translations compressed with plain deflate (the build plugin `core/plugin/src/build/pack.mjs`, unpacked by `core/plugin/src/inflate.ts`): at startup the plugin unpacks the engine and only the language Obsidian uses. Nothing is downloaded at runtime.
+
 Building the plugin needs only Node:
 
 ```sh

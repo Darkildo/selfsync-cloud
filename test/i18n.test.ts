@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { lintDict } from "../core/plugin/src/i18n/lint.ts";
+import { lintDict } from "../core/plugin/src/ext-pure.ts";
 import { formatDate, language, resolveLanguage, setLanguage, t } from "../src/i18n.ts";
 import { en } from "../src/i18n/en.ts";
 import { LOCALES } from "../src/i18n/locales.ts";

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { before, test } from "node:test";
 
-import { initWasm } from "../core/plugin/src/engine.ts";
+import { initWasm } from "../core/plugin/src/ext-pure.ts";
 import { credentials, fromB64, kdfJson, keyAuth, newRecovery, randomBytes, recoveryAuth, recoveryEntropy, toB64, vaultPassword } from "../src/account.ts";
 import type { Transport } from "../src/api.ts";
 import { Cloud, type Invite } from "../src/cloud.ts";
