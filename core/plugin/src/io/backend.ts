@@ -1,9 +1,15 @@
-// Примитивы ввода-вывода, на которых исполнитель строит действия ядра. Проверки
-// условий (expect) и коды результатов — в executor.ts, здесь только операции.
+// Примитивы ввода-вывода, на которых исполнитель строит действия ядра. Коды
+// результатов — в executor.ts; условие записи (expect) проверяет сам бэкенд — как
+// можно ближе к замене файла, иначе правка, сохранённая между проверкой и заменой,
+// пропала бы.
 //
 // Пути — относительно корня vault'а, разделитель «/», как их видит ядро.
 
-import type { FileMeta } from "../types.ts";
+import type { Expect, FileMeta } from "../types.ts";
+
+/** Итог записи с условием. `displaced` — заменённый файл изменили уже после проверки
+ *  условия: его версия отодвинута под это временное имя (ядро сохранит её копией). */
+export type WriteOutcome = { kind: "written"; meta: FileMeta; displaced?: string } | { kind: "precondition" };
 
 export interface FileBackend {
   /** Все файлы и папки vault'а. */
@@ -15,8 +21,9 @@ export interface FileBackend {
   stat(path: string): Promise<FileMeta | null>;
   /** Байты файла (`len` не задан — до конца); `null` — файла нет. */
   read(path: string, offset: number, len?: number): Promise<Uint8Array | null>;
-  /** Атомарно записать файл целиком, создав родительские папки. */
-  writeAtomic(path: string, data: Uint8Array): Promise<FileMeta>;
+  /** Атомарно записать файл целиком, создав родительские папки, если путь всё ещё
+   *  удовлетворяет `expect` (не папка). */
+  writeAtomic(path: string, data: Uint8Array, expect: Expect): Promise<WriteOutcome>;
   /** Переименовать (назначение свободно — проверено), создав родительские папки. */
   rename(from: string, to: string): Promise<void>;
   mkdir(path: string): Promise<void>;
@@ -31,8 +38,8 @@ export interface FileBackend {
   tempWrite(name: string, offset: number, data: Uint8Array): Promise<void>;
   tempRead(name: string, offset: number, len: number): Promise<Uint8Array | null>;
   tempDelete(name: string): Promise<void>;
-  /** Атомарно перенести временный файл на место в vault'е. */
-  tempCommit(name: string, path: string): Promise<FileMeta>;
+  /** Атомарно перенести временный файл на место в vault'е (условие — как у `writeAtomic`). */
+  tempCommit(name: string, path: string, expect: Expect): Promise<WriteOutcome>;
   storeRead(name: string): Promise<Uint8Array | null>;
   storeWrite(name: string, data: Uint8Array): Promise<void>;
   storeDelete(name: string): Promise<void>;
@@ -64,6 +71,69 @@ export function parentOf(path: string): string {
 
 export function nameOf(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** Суффикс временных файлов: ядро их не синхронизирует, а брошенные доводит или убирает. */
+export const TEMP_SUFFIX = ".selfsync-tmp";
+
+/** Имена, под которые отодвигается заменяемый файл: `X.aside.selfsync-tmp`, если занято
+ *  (брошено прерванной записью) — `X.aside-2.selfsync-tmp` и дальше. */
+export function* asideNames(path: string): Generator<string> {
+  const base = tempBase(path);
+  yield `${base}.aside${TEMP_SUFFIX}`;
+  for (let n = 2; n < 100; n++) yield `${base}.aside-${n}${TEMP_SUFFIX}`;
+}
+
+/** Условие записи на уже прочитанное состояние пути (`null` — пути нет). */
+export function satisfies(cur: FileMeta | null, e: Expect): boolean {
+  if (cur?.dir) return false;
+  if (e.kind === "any") return true;
+  if (e.kind === "absent") return cur === null;
+  return cur !== null && matches(cur, e);
+}
+
+/** Файл совпадает с условием (для удаления и т.п.: файл есть). */
+export function matches(m: FileMeta, e: Expect): boolean {
+  switch (e.kind) {
+    case "any":
+      return true;
+    case "absent":
+      return false;
+    case "stat":
+      return !m.dir && m.size === e.size && m.mtime === e.mtime;
+  }
+}
+
+const NAME_MAX = 255;
+/** Место под хвост после базы (`.commit`, `.case-99` и `TEMP_SUFFIX`). */
+const RESERVE = 24;
+const PREFIX_MAX = NAME_MAX - RESERVE - 1 - 16;
+const utf8 = new TextEncoder();
+
+/** FNV-1a, 64 бита, — 16 hex-цифр (то же, что `tempname::path_hash` в ядре). */
+export function pathHash(path: string): string {
+  let h = 0xcbf29ce484222325n;
+  for (const b of utf8.encode(path)) {
+    h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+
+/** База временного имени рядом с `path` (как `tempname::temp_base` в ядре): сам путь,
+ *  если имя с хвостом укладывается в 255 байт, иначе `{начало имени}~{хэш пути}` —
+ *  длинное имя с суффиксом не поместилось бы (ENAMETOOLONG). */
+export function tempBase(path: string): string {
+  const name = nameOf(path);
+  if (utf8.encode(name).length + RESERVE <= NAME_MAX) return path;
+  let prefix = "";
+  let n = 0;
+  for (const ch of name) {
+    const len = utf8.encode(ch).length;
+    if (n + len > PREFIX_MAX) break;
+    prefix += ch;
+    n += len;
+  }
+  return joinPath(parentOf(path), `${prefix}~${pathHash(path)}`);
 }
 
 /**

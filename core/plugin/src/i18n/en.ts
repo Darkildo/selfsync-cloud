@@ -49,6 +49,11 @@ export const en = {
   "notice.serverRewound": "The server was restored from a backup — full reconciliation",
   "notice.indexReset": "Sync index was damaged — a safe full reconciliation started",
   "notice.encryptionMismatch": "The vault is encrypted here but not on the server — sync stopped",
+  "notice.massDelete": "{count} of {total} files are missing here — sync stopped, nothing was deleted on the server. If this is a mistake (folder permissions, a disconnected drive), restore them and sync again. Click to delete them on all devices",
+  "massDelete.confirm": "Delete {count} missing files on all devices? They stay in the server's deleted files for the retention period.",
+  "massDelete.action": "Delete on all devices",
+  "notice.settingsOverwritten": "Settings were changed both here and on another device: {paths}. The later version was kept (by device clocks); the other one is in the trash or in the file's history on the server.",
+  "notice.linksSkipped": "Symbolic links are not synced — nothing inside them is downloaded, deleted or uploaded: {paths}",
   "notice.error": "Sync: {message}",
   "notice.engineStopped": "selfsync: the sync engine failed {n} times in a row and was stopped. Run “{cmd}” to try again; the details are in the sync log.",
 

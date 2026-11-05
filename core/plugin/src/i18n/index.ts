@@ -218,6 +218,18 @@ export function noticeText(n: Notice): string | null {
       return t("notice.indexReset");
     case "encryptionMismatch":
       return t("notice.encryptionMismatch");
+    case "massDelete":
+      return t("notice.massDelete", { count: n.count, total: n.total });
+    case "settingsOverwritten": {
+      // Полный список — в журнале (showNotice), здесь — начало.
+      const paths = [...n.keptLocal, ...n.keptRemote].sort();
+      const more = paths.length > 3 ? ` …+${paths.length - 3}` : "";
+      return t("notice.settingsOverwritten", { paths: paths.slice(0, 3).join(", ") + more });
+    }
+    case "linksSkipped": {
+      const more = n.paths.length > 3 ? ` …+${n.paths.length - 3}` : "";
+      return t("notice.linksSkipped", { paths: n.paths.slice(0, 3).join(", ") + more });
+    }
     case "error":
       return t("notice.error", { message: n.code === "read_only" ? t("readOnly.error") : n.message });
   }

@@ -50,6 +50,11 @@ const fr: Dict = {
   "notice.serverRewound": "Le serveur a été restauré à partir d'une sauvegarde — rapprochement complet",
   "notice.indexReset": "L'index de synchronisation était endommagé — un rapprochement complet sûr a commencé",
   "notice.encryptionMismatch": "Le coffre est chiffré ici mais pas sur le serveur — synchronisation arrêtée",
+  "notice.massDelete": "{count} fichiers sur {total} sont absents ici — synchronisation arrêtée, rien n'a été supprimé sur le serveur. Si c'est une erreur (droits du dossier, disque déconnecté), restaurez-les et synchronisez à nouveau. Cliquez pour les supprimer sur tous les appareils",
+  "massDelete.confirm": "Supprimer {count} fichiers manquants sur tous les appareils ? Ils restent dans les fichiers supprimés du serveur pendant la durée de conservation.",
+  "massDelete.action": "Supprimer sur tous les appareils",
+  "notice.settingsOverwritten": "Les paramètres ont été modifiés ici et sur un autre appareil : {paths}. La version la plus récente a été conservée (selon les horloges des appareils) ; l'autre se trouve dans la corbeille ou dans l'historique du fichier sur le serveur.",
+  "notice.linksSkipped": "Les liens symboliques ne sont pas synchronisés — rien n'y est téléchargé, supprimé ou envoyé : {paths}",
   "notice.error": "Synchronisation : {message}",
   "notice.engineStopped": "selfsync : le moteur de synchronisation a échoué {n} fois de suite et a été arrêté. Lancez « {cmd} » pour réessayer ; les détails sont dans le journal de synchronisation.",
 

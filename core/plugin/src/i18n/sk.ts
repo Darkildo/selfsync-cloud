@@ -50,6 +50,11 @@ const sk: Dict = {
   "notice.serverRewound": "Server bol obnovený zo zálohy — úplné zosúladenie",
   "notice.indexReset": "Index synchronizácie bol poškodený — spustilo sa bezpečné úplné zosúladenie",
   "notice.encryptionMismatch": "Trezor je tu zašifrovaný, ale na serveri nie — synchronizácia zastavená",
+  "notice.massDelete": "Tu chýba {count} z {total} súborov — synchronizácia zastavená, na serveri sa nič nevymazalo. Ak ide o chybu (oprávnenia priečinka, odpojený disk), obnovte ich a synchronizujte znova. Kliknutím ich vymažete na všetkých zariadeniach",
+  "massDelete.confirm": "Vymazať {count} chýbajúcich súborov na všetkých zariadeniach? Počas doby uchovania zostanú vo vymazaných súboroch servera.",
+  "massDelete.action": "Vymazať na všetkých zariadeniach",
+  "notice.settingsOverwritten": "Nastavenia boli zmenené tu aj na inom zariadení: {paths}. Zachovala sa neskoršia verzia (podľa hodín zariadení); druhá je v koši alebo v histórii súboru na serveri.",
+  "notice.linksSkipped": "Symbolické odkazy sa nesynchronizujú — nič v nich sa nesťahuje, nemaže ani nenahráva: {paths}",
   "notice.error": "Synchronizácia: {message}",
   "notice.engineStopped": "selfsync: jadro synchronizácie zlyhalo {n}× po sebe a bolo zastavené. Spustite „{cmd}“ a skúste to znova; podrobnosti sú v denníku synchronizácie.",
 

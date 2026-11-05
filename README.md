@@ -24,7 +24,7 @@ The key is passed only between devices that both run 0.3.0 or later: update the 
 
 **Email and password** are optional, in the account settings: with them you can sign in by typing on any device and confirm deletion with the password. One password for the account and the encryption; it never leaves the device.
 
-**Day to day.** Sync runs by itself. Conflicting edits are merged or kept as conflict copies; deleted files and older versions are in the file history and the trash, as in selfsync. The settings show your storage use, the account’s sign-ins and devices (any of them can be revoked) and the plans. You can sign out or delete the account with all its data there too.
+**Day to day.** Sync runs by itself. Conflicting edits are merged or kept as conflict copies; deleted files and older versions are in the file history and the trash, as in selfsync. If a scan suddenly misses many files (a disconnected drive, a folder that cannot be read), sync stops before deleting anything and asks you to confirm; symbolic links inside the vault are not synced. The settings show your storage use, the account’s sign-ins and devices (any of them can be revoked) and the plans. You can sign out or delete the account with all its data there too.
 
 ## Languages
 
