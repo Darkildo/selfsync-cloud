@@ -50,6 +50,11 @@ const af: Dict = {
   "notice.serverRewound": "Die bediener is uit 'n rugsteun herstel — volledige versoening",
   "notice.indexReset": "Die sinkroniseringsindeks was beskadig — 'n veilige volledige versoening het begin",
   "notice.encryptionMismatch": "Die kluis is hier geënkripteer maar nie op die bediener nie — sinkronisering gestop",
+  "notice.massDelete": "{count} van {total} lêers ontbreek hier — sinkronisering gestop, niks is op die bediener uitgevee nie. As dit 'n fout is (vouertoestemmings, 'n ontkoppelde skyf), herstel hulle en sinkroniseer weer. Klik om hulle op alle toestelle uit te vee",
+  "massDelete.confirm": "Vee {count} ontbrekende lêers op alle toestelle uit? Hulle bly vir die bewaartydperk in die bediener se uitgeveede lêers.",
+  "massDelete.action": "Vee op alle toestelle uit",
+  "notice.settingsOverwritten": "Instellings is hier én op 'n ander toestel verander: {paths}. Die later weergawe is behou (volgens die toestelle se horlosies); die ander is in die asblik of in die lêer se geskiedenis op die bediener.",
+  "notice.linksSkipped": "Simboliese skakels word nie gesinkroniseer nie — niks daarin word afgelaai, uitgevee of opgelaai nie: {paths}",
   "notice.error": "Sinkronisering: {message}",
   "notice.engineStopped": "selfsync: die sinkroniseringsenjin het {n} keer na mekaar misluk en is gestop. Voer “{cmd}” uit om weer te probeer; besonderhede is in die sinkroniseringslog.",
 

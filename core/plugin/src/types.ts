@@ -41,6 +41,12 @@ export interface FileMeta {
   size: number;
   mtime: number;
   dir: boolean;
+  /** Символическая ссылка — сам путь или папка на пути к нему: не синхронизируется
+   *  (может вести за пределы vault'а). */
+  link?: boolean;
+  /** Время изменения inode (мс), только на десктопе: правка того же размера с
+   *  восстановленным mtime видна по нему. Нет — неизвестно. */
+  ctime?: number;
 }
 
 export type Expect = { kind: "any" } | { kind: "absent" } | { kind: "stat"; size: number; mtime: number };
@@ -132,6 +138,15 @@ export type Notice =
   | { kind: "serverRewound" }
   | { kind: "indexReset" }
   | { kind: "encryptionMismatch" }
+  /** Полный обход не нашёл `count` из `total` файлов: синк остановлен, удаления не
+   *  отправлены — до возврата файлов и «Синхронизировать» или `allowDeletes`. */
+  | { kind: "massDelete"; count: number; total: number }
+  /** Настройки (`noMerge`) изменены здесь и на другом устройстве: оставлена версия
+   *  с более поздней mtime, без копий. `keptLocal` — своя (серверная в истории
+   *  версий), `keptRemote` — серверная (своя в корзине). Одно на цикл синка. */
+  | { kind: "settingsOverwritten"; keptLocal: string[]; keptRemote: string[] }
+  /** Найдены символические ссылки: они и всё под ними не синхронизируются. */
+  | { kind: "linksSkipped"; paths: string[] }
   | { kind: "error"; code: string; message: string };
 
 export interface ConflictRecord {
@@ -254,7 +269,8 @@ export type UiCommand =
   | { type: "diagnose" }
   | { type: "skipped" }
   | { type: "download"; path: string }
-  | { type: "removeLocal"; path: string };
+  | { type: "removeLocal"; path: string }
+  | { type: "allowDeletes" };
 
 export type ConflictChoice = "keepBoth" | "keepMine" | "keepServer";
 
@@ -266,6 +282,8 @@ export type IoResult =
   | { type: "done" }
   | { type: "notFound" }
   | { type: "precondition" }
+  /** Записано, но заменённый файл изменили после проверки условия: его версия — в `aside`. */
+  | { type: "displaced"; meta: FileMeta; aside: string }
   | { type: "failed"; message: string };
 
 export type Action =

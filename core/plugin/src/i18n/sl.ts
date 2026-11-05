@@ -50,6 +50,11 @@ const sl: Dict = {
   "notice.serverRewound": "Strežnik je bil obnovljen iz varnostne kopije — popolna uskladitev",
   "notice.indexReset": "Indeks sinhronizacije je bil poškodovan — začela se je varna popolna uskladitev",
   "notice.encryptionMismatch": "Sef je tukaj šifriran, na strežniku pa ne — sinhronizacija ustavljena",
+  "notice.massDelete": "Tu manjka {count} od {total} datotek — sinhronizacija ustavljena, na strežniku ni bilo nič izbrisano. Če gre za napako (dovoljenja mape, odklopljen pogon), jih obnovite in znova sinhronizirajte. Kliknite, da jih izbrišete na vseh napravah",
+  "massDelete.confirm": "Izbrišem {count} manjkajočih datotek na vseh napravah? V času hrambe ostanejo med izbrisanimi datotekami strežnika.",
+  "massDelete.action": "Izbriši na vseh napravah",
+  "notice.settingsOverwritten": "Nastavitve so bile spremenjene tukaj in na drugi napravi: {paths}. Ohranjena je poznejša različica (po urah naprav); druga je v košu ali v zgodovini datoteke na strežniku.",
+  "notice.linksSkipped": "Simbolne povezave se ne sinhronizirajo — v njih se nič ne prenese, izbriše ali naloži: {paths}",
   "notice.error": "Sinhronizacija: {message}",
   "notice.engineStopped": "selfsync: sinhronizacijski pogon je {n}-krat zapored odpovedal in je bil ustavljen. Zaženite „{cmd}“ za ponoven poskus; podrobnosti so v dnevniku sinhronizacije.",
 
