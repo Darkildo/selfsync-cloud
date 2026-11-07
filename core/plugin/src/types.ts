@@ -47,6 +47,9 @@ export interface FileMeta {
   /** Время изменения inode (мс), только на десктопе: правка того же размера с
    *  восстановленным mtime видна по нему. Нет — неизвестно. */
   ctime?: number;
+  /** Файл есть в листинге, а метаданные прочитать не удалось: ядро не наблюдает
+   *  его и не считает удалённым до следующего обхода. */
+  unreadable?: boolean;
 }
 
 export type Expect = { kind: "any" } | { kind: "absent" } | { kind: "stat"; size: number; mtime: number };
@@ -162,6 +165,8 @@ export interface DeletedView {
   expiresAt: number;
   size: number;
   device: number;
+  /** seq tombstone'а: передаётся в `purgeDeleted.seqs`. */
+  seq: number;
 }
 
 export interface RevisionView {
@@ -244,7 +249,9 @@ export interface DiagCheck {
 export type UiCommand =
   | { type: "listDeleted" }
   | { type: "restoreDeleted"; paths: string[] }
-  | { type: "purgeDeleted"; paths: string[] }
+  /** `seqs` — пусто или seq каждого показанного tombstone'а (`DeletedView.seq`):
+   *  путь, восстановленный или удалённый заново после показа, сервер 1.5+ не тронет. */
+  | { type: "purgeDeleted"; paths: string[]; seqs?: number[] }
   | { type: "history"; path: string }
   | { type: "restoreRevision"; path: string; rev: number }
   | { type: "purgeHistory"; path: string; beforeRev: number }
@@ -270,7 +277,9 @@ export type UiCommand =
   | { type: "skipped" }
   | { type: "download"; path: string }
   | { type: "removeLocal"; path: string }
-  | { type: "allowDeletes" };
+  | { type: "allowDeletes" }
+  /** Ближайший полный обход хэширует все файлы, не доверяя размеру и mtime. */
+  | { type: "verifyContent" };
 
 export type ConflictChoice = "keepBoth" | "keepMine" | "keepServer";
 
